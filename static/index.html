@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本地空间清理面板</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #e4e6eb;
+    --border-strong: #d3d6dc;
+    --text: #16191f;
+    --text-2: #5a6270;
+    --text-3: #8b93a1;
+    --accent: #2563eb;
+    --accent-soft: #eff4ff;
+    --safe: #059669;
+    --safe-soft: #ecfdf5;
+    --caution: #b45309;
+    --caution-soft: #fffbeb;
+    --keep: #b91c1c;
+    --keep-soft: #fef2f2;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --shadow-lg: 0 12px 32px rgba(16, 24, 40, .12), 0 2px 8px rgba(16, 24, 40, .06);
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 96px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 24px 0; }
+
+  /* ---------- 顶部 ---------- */
+  header { margin-bottom: 24px; }
+  .eyebrow {
+    font-size: 12px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-3); margin-bottom: 8px;
+  }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -.02em; }
+  h1 span { color: var(--text-3); font-weight: 400; font-size: 15px; margin-left: 10px; letter-spacing: 0; }
+
+  /* ---------- 磁盘卡 ---------- */
+  .disk-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 22px 24px; margin-bottom: 16px;
+  }
+  .disk-top { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .disk-big { font-size: 32px; font-weight: 680; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .disk-sub { color: var(--text-2); font-size: 13px; }
+  .disk-sub b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bar { height: 10px; border-radius: 99px; background: #eef0f3; overflow: hidden; display: flex; }
+  .bar > i { display: block; height: 100%; transition: width .8s cubic-bezier(.22,.61,.36,1); }
+  .bar .seg-app { background: #94a3b8; }
+  .bar .seg-safe { background: var(--safe); }
+  .bar .seg-caution { background: #f59e0b; }
+  .legend { display: flex; gap: 20px; margin-top: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); }
+  .legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+
+  /* ---------- 统计卡 ---------- */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 22px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px;
+    position: relative; overflow: hidden;
+  }
+  .stat::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  }
+  .stat.s-safe::before { background: var(--safe); }
+  .stat.s-caution::before { background: #f59e0b; }
+  .stat.s-keep::before { background: var(--keep); }
+  .stat .label { font-size: 12.5px; color: var(--text-2); margin-bottom: 6px; }
+  .stat .value { font-size: 22px; font-weight: 660; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat .hint { font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
+
+  /* ---------- 工具栏 ---------- */
+  .toolbar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .chips { display: flex; gap: 6px; background: #eceef2; padding: 3px; border-radius: 9px; }
+  .chip {
+    border: 0; background: transparent; color: var(--text-2);
+    font: inherit; font-size: 13px; font-weight: 500;
+    padding: 6px 13px; border-radius: 7px; cursor: pointer;
+    transition: background .15s, color .15s, box-shadow .15s;
+  }
+  .chip:hover { color: var(--text); }
+  .chip.active { background: #fff; color: var(--text); box-shadow: var(--shadow); }
+  .chip .cnt { color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 4px; }
+  .search {
+    flex: 1; min-width: 180px; position: relative;
+  }
+  .search input {
+    width: 100%; border: 1px solid var(--border); background: var(--panel);
+    border-radius: 9px; padding: 8px 12px 8px 34px; font: inherit; color: var(--text);
+    outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-3); }
+  .btn {
+    border: 1px solid var(--border-strong); background: var(--panel); color: var(--text);
+    font: inherit; font-size: 13px; font-weight: 500; padding: 8px 14px;
+    border-radius: 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    transition: background .15s, border-color .15s, transform .08s;
+  }
+  .btn:hover { background: #fafbfc; }
+  .btn:active { transform: scale(.985); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: var(--text); color: #fff; border-color: var(--text); }
+  .btn-primary:hover { background: #2b3038; }
+  .btn-danger { background: var(--keep); color: #fff; border-color: var(--keep); }
+  .btn-danger:hover { background: #a01818; }
+
+  /* ---------- 列表 ---------- */
+  .list {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .group-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 18px; background: #fafbfc; border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 600; color: var(--text-2); letter-spacing: .02em;
+  }
+  .group-head .sum { font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+  .row {
+    display: grid; grid-template-columns: 28px 1fr auto;
+    gap: 14px; align-items: start;
+    padding: 14px 18px; border-bottom: 1px solid #f0f1f4;
+    transition: background .12s;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row:hover { background: #fcfcfd; }
+  .row.removing { opacity: 0; transform: translateX(12px); transition: opacity .3s, transform .3s; }
+
+  .cb { padding-top: 2px; }
+  .cb input {
+    appearance: none; width: 17px; height: 17px; border: 1.5px solid var(--border-strong);
+    border-radius: 5px; cursor: pointer; position: relative; background: #fff;
+    transition: background .15s, border-color .15s;
+  }
+  .cb input:checked { background: var(--accent); border-color: var(--accent); }
+  .cb input:checked::after {
+    content: ""; position: absolute; left: 5px; top: 1.5px; width: 4px; height: 8px;
+    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+  .cb input:disabled { background: #f1f2f4; border-color: var(--border); cursor: not-allowed; }
+  .cb input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .info { min-width: 0; }
+  .title-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+  .name { font-weight: 560; font-size: 14px; }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 5px; letter-spacing: .01em;
+  }
+  .badge.safe { color: var(--safe); background: var(--safe-soft); }
+  .badge.caution { color: var(--caution); background: var(--caution-soft); }
+  .badge.keep { color: var(--keep); background: var(--keep-soft); }
+  .badge.cat { color: var(--text-2); background: #f1f2f5; font-weight: 500; }
+  .desc { font-size: 12.5px; color: var(--text-2); margin-bottom: 4px; }
+  .paths {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 11.5px; color: var(--text-3); word-break: break-all;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .size {
+    font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px;
+    text-align: right; white-space: nowrap; padding-top: 1px;
+  }
+  .size small { display: block; font-weight: 400; font-size: 11px; color: var(--text-3); }
+
+  .empty { padding: 48px 20px; text-align: center; color: var(--text-3); }
+  .empty .spin-lg {
+    width: 22px; height: 22px; margin: 0 auto 14px;
+    border: 2.5px solid #e6e8ec; border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  .empty .tip { font-size: 12.5px; margin-top: 6px; color: var(--text-3); }
+  .empty code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 12px; background: #f1f2f5; color: var(--text);
+    padding: 1.5px 5px; border-radius: 4px;
+  }
+
+  /* ---------- 底部操作栏 ---------- */
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: rgba(255,255,255,.86); backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--border);
+  }
+  .actionbar-in {
+    max-width: 1120px; margin: 0 auto; padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .sel-info { font-size: 13.5px; color: var(--text-2); }
+  .sel-info b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .sel-info .warn { color: var(--caution); }
+  .actions { display: flex; gap: 8px; }
+
+  /* ---------- 弹窗 ---------- */
+  .mask {
+    position: fixed; inset: 0; background: rgba(16,24,40,.42);
+    display: none; align-items: center; justify-content: center; z-index: 60; padding: 20px;
+  }
+  .mask.show { display: flex; animation: fade .18s ease; }
+  @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+  .modal {
+    background: #fff; border-radius: 14px; box-shadow: var(--shadow-lg);
+    width: 100%; max-width: 520px; overflow: hidden;
+    animation: pop .2s cubic-bezier(.2,.8,.3,1);
+  }
+  @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: none } }
+  .modal-hd { padding: 20px 22px 0; }
+  .modal-hd h2 { font-size: 17px; font-weight: 640; margin-bottom: 6px; }
+  .modal-hd p { font-size: 13px; color: var(--text-2); }
+  .modal-bd { padding: 16px 22px; max-height: 46vh; overflow: auto; }
+  .confirm-list { display: flex; flex-direction: column; gap: 8px; }
+  .confirm-item {
+    display: flex; justify-content: space-between; gap: 12px;
+    font-size: 13px; padding: 9px 12px; background: #fafbfc;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .confirm-item .cn { color: var(--text); }
+  .confirm-item .cs { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .notice {
+    display: flex; gap: 9px; align-items: flex-start;
+    background: var(--caution-soft); border: 1px solid #fde68a; color: #78350f;
+    border-radius: 9px; padding: 11px 13px; font-size: 12.5px; margin-top: 14px; line-height: 1.55;
+  }
+  .notice svg { flex: none; margin-top: 1px; }
+  .modal-ft { padding: 0 22px 20px; display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ---------- toast ---------- */
+  .toasts { position: fixed; right: 20px; bottom: 88px; z-index: 80; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    background: #16191f; color: #fff; font-size: 13px; padding: 11px 15px;
+    border-radius: 9px; box-shadow: var(--shadow-lg); max-width: 380px;
+    animation: slide .22s ease;
+  }
+  .toast.err { background: #9f1239; }
+  @keyframes slide { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.35);
+    border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+
+  @media (max-width: 720px) {
+    .wrap { padding: 20px 14px 0; }
+    .stats { grid-template-columns: 1fr; }
+    .row { grid-template-columns: 24px 1fr; }
+    .size { grid-column: 2; text-align: left; }
+    h1 { font-size: 21px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Disk Analyzer</div>
+    <h1>本地空间清理面板</h1>
+  </header>
+
+  <section class="disk-card">
+    <div class="disk-top">
+      <div class="disk-big" id="diskUsed">—</div>
+      <div class="disk-sub" id="diskSub">正在读取磁盘信息…</div>
+    </div>
+    <div class="bar">
+      <i class="seg-app" id="segApp" style="width:0"></i>
+      <i class="seg-safe" id="segSafe" style="width:0"></i>
+      <i class="seg-caution" id="segCaution" style="width:0"></i>
+    </div>
+    <div class="legend">
+      <span><i style="background:#94a3b8"></i>其他已用</span>
+      <span><i style="background:var(--safe)"></i>可安全清理</span>
+      <span><i style="background:#f59e0b"></i>需确认</span>
+      <span id="freeTxt" style="margin-left:auto;color:var(--text-3)"></span>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="stat s-safe">
+      <div class="label">可安全清理</div>
+      <div class="value" id="statSafe">—</div>
+      <div class="hint">缓存 / 日志 / 临时残留，删后自动重建</div>
+    </div>
+    <div class="stat s-caution">
+      <div class="label">需确认</div>
+      <div class="value" id="statCaution">—</div>
+      <div class="hint">可能影响功能或含不可再生数据</div>
+    </div>
+    <div class="stat s-keep">
+      <div class="label">已保护（不建议删）</div>
+      <div class="value" id="statKeep">—</div>
+      <div class="hint">代码 / 凭据 / 个人文件</div>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <div class="chips" id="chips">
+      <button class="chip active" data-f="all">全部 <span class="cnt" id="cAll"></span></button>
+      <button class="chip" data-f="safe">可安全删 <span class="cnt" id="cSafe"></span></button>
+      <button class="chip" data-f="caution">需确认 <span class="cnt" id="cCaution"></span></button>
+      <button class="chip" data-f="keep">已保护 <span class="cnt" id="cKeep"></span></button>
+    </div>
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="搜索名称、路径、分类…">
+    </div>
+    <button class="btn" id="btnSelSafe">选中全部安全项</button>
+    <button class="btn" id="btnRescan">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+      重新扫描
+    </button>
+  </div>
+
+  <div class="list" id="list">
+    <div class="empty">正在扫描…</div>
+  </div>
+</div>
+
+<div class="actionbar">
+  <div class="actionbar-in">
+    <div class="sel-info" id="selInfo">未选择任何项目</div>
+    <div class="actions">
+      <button class="btn" id="btnClear">清空选择</button>
+      <button class="btn btn-danger" id="btnTrash" disabled>移入废纸篓</button>
+    </div>
+  </div>
+</div>
+
+<div class="mask" id="mask">
+  <div class="modal">
+    <div class="modal-hd">
+      <h2>确认移入废纸篓？</h2>
+      <p id="modalSub"></p>
+    </div>
+    <div class="modal-bd">
+      <div class="confirm-list" id="confirmList"></div>
+      <div class="notice">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span>文件将被移入系统废纸篓（~/.Trash），<b>可从废纸篓恢复</b>。本工具不会执行永久删除。</span>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" id="btnCancel">取消</button>
+      <button class="btn btn-danger" id="btnConfirm">确认移入废纸篓</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+const state = {
+  data: null,
+  filter: 'all',
+  query: '',
+  selected: new Set(),
+  busy: false,
+};
+
+const RISK_LABEL = { safe: '可安全删', caution: '需确认', keep: '已保护' };
+const $ = (s) => document.querySelector(s);
+
+function fmt(bytes) {
+  if (!bytes) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, n = bytes;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + ' ' + u[i];
+}
+
+function toast(msg, isErr) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (isErr ? ' err' : '');
+  el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3200);
+  setTimeout(() => el.remove(), 3600);
+}
+
+async function load(force = false, retries = 1) {
+  $('#list').innerHTML = `<div class="empty">
+    <div class="spin-lg"></div>
+    <div>正在扫描磁盘…</div>
+    <div class="tip">需遍历缓存与日志目录，约 5–10 秒</div>
+  </div>`;
+  try {
+    const res = await fetch('/api/scan' + (force ? '?force=1' : ''), { cache: 'no-store' });
+
+    // 先判 HTTP 层，再判 JSON：服务端异常时可能返回非 JSON
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`服务返回了非预期内容（HTTP ${res.status}）`);
+    }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+
+    state.data = data;
+    state.selected.clear();
+    render();
+  } catch (e) {
+    // 网络层失败（服务未启动）与业务错误分开提示，否则用户看不懂「扫描失败」
+    const offline = e instanceof TypeError ||
+      /Failed to fetch|NetworkError|load failed|fetch/i.test(e.message || '');
+    if (offline && retries > 0) {
+      // 服务可能刚启动尚未就绪，1.5 秒后自动重试一次
+      $('#list').innerHTML = `<div class="empty">
+        <div class="spin-lg"></div>
+        <div>正在连接本地服务…</div>
+        <div class="tip">首次启动需等待服务就绪</div>
+      </div>`;
+      setTimeout(() => load(force, retries - 1), 1500);
+      return;
+    }
+    renderError(offline, e.message || String(e));
+  }
+}
+
+function renderError(offline, msg) {
+  $('#freeTxt').textContent = '';  // 没有数据时不能残留上一次的可用空间
+  $('#list').innerHTML = `<div class="empty">
+    <div style="font-size:15px;color:var(--text);font-weight:600;margin-bottom:8px">
+      ${offline ? '无法连接本地服务' : '扫描失败'}
+    </div>
+    <div class="tip" style="max-width:480px;margin:0 auto 16px;line-height:1.8">
+      ${offline
+        ? '浏览器没能连上 <code>127.0.0.1:8765</code>。<br>最常见的原因是启动脚本的终端窗口已被关闭，服务随之停止。'
+        : msg}
+    </div>
+    ${offline
+      ? '<div class="tip" style="margin-bottom:16px">重新启动：在项目目录执行 <code>./start.command</code>，或 <code>python3 server.py</code></div>'
+      : ''}
+    <button class="btn btn-primary" onclick="load(true, 0)">重试连接</button>
+  </div>`;
+}
+
+function visibleItems() {
+  if (!state.data) return [];
+  const q = state.query.trim().toLowerCase();
+  return state.data.items.filter(it => {
+    if (state.filter !== 'all' && it.risk !== state.filter) return false;
+    if (!q) return true;
+    return (it.name + it.category + it.desc + it.paths.join(' ')).toLowerCase().includes(q);
+  });
+}
+
+function render() {
+  const d = state.data;
+  if (!d) return;
+
+  // 磁盘概览
+  const { total, used, free, percent } = d.disk;
+  $('#diskUsed').textContent = fmt(used) + ' / ' + fmt(total);
+  $('#diskSub').innerHTML = '已使用 <b>' + percent + '%</b> · 剩余 <b>' + fmt(free) + '</b> · 扫描于 ' + d.generated_at;
+  const safe = d.summary.safe, caution = d.summary.caution;
+  const other = Math.max(0, used - safe - caution);
+  const pct = (v) => (v / total * 100) + '%';
+  $('#segApp').style.width = pct(other);
+  $('#segSafe').style.width = pct(safe);
+  $('#segCaution').style.width = pct(caution);
+
+  // 「清理后」的预测由 updateForecast() 负责，必须跟随勾选状态，
+  // 不能在这里用 safe 总量写死——否则用户什么都没选也会看到预测值。
+
+  $('#statSafe').textContent = fmt(safe);
+  $('#statCaution').textContent = fmt(caution);
+  $('#statKeep').textContent = fmt(d.summary.keep);
+
+  // 计数
+  const cnt = (r) => d.items.filter(i => i.risk === r).length;
+  $('#cAll').textContent = d.items.length;
+  $('#cSafe').textContent = cnt('safe');
+  $('#cCaution').textContent = cnt('caution');
+  $('#cKeep').textContent = cnt('keep');
+
+  // 列表：按风险分组，组内按体积降序
+  const items = visibleItems();
+  if (!items.length) {
+    $('#list').innerHTML = '<div class="empty">没有匹配的项目</div>';
+    updateBar();
+    return;
+  }
+  const order = { safe: 0, caution: 1, keep: 2 };
+  items.sort((a, b) => order[a.risk] - order[b.risk] || b.size - a.size);
+
+  let html = '', lastGroup = null;
+  for (const it of items) {
+    const groupKey = it.risk;
+    if (groupKey !== lastGroup) {
+      const groupItems = items.filter(x => x.risk === groupKey);
+      const sum = groupItems.reduce((s, x) => s + x.size, 0);
+      html += `<div class="group-head"><span>${RISK_LABEL[it.risk]}</span>
+        <span class="sum">${groupItems.length} 项 · ${fmt(sum)}</span></div>`;
+      lastGroup = groupKey;
+    }
+    const disabled = it.risk === 'keep';
+    const checked = state.selected.has(it.id) ? 'checked' : '';
+    html += `
+      <div class="row" data-id="${it.id}">
+        <div class="cb"><input type="checkbox" ${checked} ${disabled ? 'disabled' : ''} aria-label="${it.name}"></div>
+        <div class="info">
+          <div class="title-line">
+            <span class="name">${it.name}</span>
+            <span class="badge ${it.risk}">${RISK_LABEL[it.risk]}</span>
+            <span class="badge cat">${it.category}</span>
+          </div>
+          <div class="desc">${it.desc}</div>
+          <div class="paths">${it.paths.join('  ·  ')}</div>
+        </div>
+        <div class="size">${fmt(it.size)}${it.file_count > 1 ? `<small>${it.file_count} 个路径</small>` : ''}</div>
+      </div>`;
+  }
+  $('#list').innerHTML = html;
+
+  // 绑定 checkbox
+  $('#list').querySelectorAll('.row').forEach(row => {
+    const cb = row.querySelector('input');
+    if (!cb || cb.disabled) return;
+    cb.addEventListener('change', () => {
+      const id = row.dataset.id;
+      if (cb.checked) state.selected.add(id); else state.selected.delete(id);
+      updateBar();
+    });
+  });
+
+  updateBar();
+}
+
+function selectedItems() {
+  if (!state.data) return [];
+  return state.data.items.filter(i => state.selected.has(i.id));
+}
+
+function updateBar() {
+  const sel = selectedItems();
+  const total = sel.reduce((s, i) => s + i.size, 0);
+  const hasCaution = sel.some(i => i.risk === 'caution');
+  const bar = $('#selInfo');
+
+  if (!sel.length) {
+    bar.textContent = '未选择任何项目';
+  } else {
+    bar.innerHTML = `已选 <b>${sel.length}</b> 项 · 共 <b>${fmt(total)}</b>` +
+      (hasCaution ? ` · <span class="warn">含 ${sel.filter(i => i.risk === 'caution').length} 项需确认</span>` : '');
+  }
+  $('#btnTrash').disabled = !sel.length || state.busy;
+  $('#btnTrash').textContent = state.busy ? '处理中…' : '移入废纸篓';
+
+  updateForecast();
+}
+
+// 「清理后」预测必须跟随勾选：未选择时不显示预测，只显示当前可用空间。
+// 早期版本用 safe 总量写死，导致什么都没选也显示「清理后 X GB」，属误导。
+function updateForecast() {
+  const el = $('#freeTxt');
+  if (!state.data) { el.textContent = ''; return; }
+
+  const free = state.data.disk.free;
+  const selSize = selectedItems().reduce((s, i) => s + i.size, 0);
+  const strong = 'font-weight:600';
+  const base = `可用 <b style="color:var(--text);${strong}">${fmt(free)}</b>`;
+
+  el.innerHTML = selSize > 0
+    ? base + ` <span style="color:var(--text-3)">→ 清理后</span> ` +
+      `<b style="color:var(--safe);${strong}">${fmt(free + selSize)}</b>`
+    : base;
+}
+
+// ---------- 交互 ----------
+$('#chips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  state.filter = chip.dataset.f;
+  render();
+});
+
+$('#q').addEventListener('input', (e) => {
+  state.query = e.target.value;
+  render();
+});
+
+$('#btnSelSafe').addEventListener('click', () => {
+  if (!state.data) return;
+  state.selected.clear();
+  visibleItems().filter(i => i.risk === 'safe').forEach(i => state.selected.add(i.id));
+  render();
+});
+
+$('#btnClear').addEventListener('click', () => {
+  state.selected.clear();
+  render();
+});
+
+$('#btnRescan').addEventListener('click', () => { if (!state.busy) load(true); });
+
+$('#btnTrash').addEventListener('click', () => {
+  const sel = selectedItems();
+  if (!sel.length) return;
+  const total = sel.reduce((s, i) => s + i.size, 0);
+  $('#modalSub').textContent = `共 ${sel.length} 项，合计 ${fmt(total)}。请确认清单无误。`;
+  $('#confirmList').innerHTML = sel.map(i =>
+    `<div class="confirm-item"><span class="cn">${i.name}</span><span class="cs">${fmt(i.size)}</span></div>`
+  ).join('');
+  $('#mask').classList.add('show');
+});
+
+$('#btnCancel').addEventListener('click', () => $('#mask').classList.remove('show'));
+$('#mask').addEventListener('click', (e) => { if (e.target === $('#mask')) $('#mask').classList.remove('show'); });
+
+$('#btnConfirm').addEventListener('click', async () => {
+  const ids = [...state.selected];
+  if (!ids.length) return;
+  $('#mask').classList.remove('show');
+  state.busy = true;
+  updateBar();
+  const btn = $('#btnConfirm');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/trash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const out = await res.json();
+    if (out.error) throw new Error(out.error);
+
+    const ok = out.results.filter(r => r.ok);
+    const bad = out.results.filter(r => !r.ok);
+
+    // 动画移除成功的行
+    ok.forEach(r => {
+      const row = document.querySelector(`.row[data-id="${r.id}"]`);
+      if (row) { row.classList.add('removing'); setTimeout(() => row.remove(), 320); }
+      state.selected.delete(r.id);
+    });
+
+    if (ok.length) toast(`已将 ${ok.length} 项移入废纸篓（${out.elapsed}s），可从废纸篓恢复`);
+    if (bad.length) toast(bad.map(b => `${b.id}：${b.error || b.failed.join('; ')}`).join(' | '), true);
+
+    // 延迟重扫，等文件系统更新；带 force 跳过缓存
+    setTimeout(() => load(true), 600);
+  } catch (e) {
+    toast('操作失败：' + e.message, true);
+  } finally {
+    state.busy = false;
+    btn.disabled = false;
+    updateBar();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('#mask').classList.remove('show');
+});
+
+load();
+</script>
+</body>
+</html>

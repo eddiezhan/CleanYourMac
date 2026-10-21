@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "自定义目标示例。把本文件复制为 targets.local.json 后按需修改。",
+    "targets.local.json 已被 .gitignore 忽略，不会随仓库分发。",
+    "id 与内置清单冲突时，以本地配置为准，可用于覆盖默认的风险判定。"
+  ],
+  "targets": [
+    {
+      "id": "my-editor-cache",
+      "name": "某编辑器缓存",
+      "category": "开发缓存",
+      "paths": ["~/Library/Caches/com.example.editor"],
+      "risk": "safe",
+      "desc": "编辑器索引缓存，删除后重新打开项目会重建索引。"
+    },
+    {
+      "id": "my-build-output",
+      "name": "本地构建输出",
+      "category": "构建产物",
+      "paths": ["~/work/my-project/dist", "~/work/my-project/build"],
+      "risk": "safe",
+      "desc": "可重新构建的产物目录，源码不受影响。"
+    },
+    {
+      "id": "my-old-logs",
+      "name": "自建服务日志",
+      "category": "日志",
+      "paths": ["~/services/logs/*.log"],
+      "risk": "caution",
+      "desc": "自建服务的历史日志。排障时需要，确认后再删。"
+    }
+  ]
+}

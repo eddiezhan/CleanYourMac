@@ -1,0 +1,16 @@
+# 运行时产物：每次扫描/删除都会重新生成，不应进仓库
+data.json
+deletes.log
+
+# 本地自定义目标：含个人环境信息，默认不进仓库
+targets.local.json
+
+# 编辑器与系统
+.DS_Store
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+
+# 本地工作区数据
+.workbuddy-ai/
