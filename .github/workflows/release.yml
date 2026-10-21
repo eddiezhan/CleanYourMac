@@ -1,0 +1,83 @@
+name: Release
+
+# 推送 v* 标签时自动：跑测试 → 打包 → 创建 Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+# gh release create 需要写权限
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      # 测试不过就不出包，避免把坏版本发出去
+      - name: Test before release
+        run: python -m unittest discover -s tests -v
+
+      - name: Build archives
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          # 用 git archive 而非 zip -r：只含已跟踪文件，
+          # 且能保留 start.command 的可执行权限位
+          git archive --format=tar.gz \
+            --prefix="CleanYourMac-${VERSION}/" HEAD \
+            -o "dist/CleanYourMac-${VERSION}.tar.gz"
+          git archive --format=zip \
+            --prefix="CleanYourMac-${VERSION}/" HEAD \
+            -o "dist/CleanYourMac-${VERSION}.zip"
+
+          echo "### 打包结果" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -lh dist >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify archive contents
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="dist/CleanYourMac-${VERSION}.tar.gz"
+
+          # 确保没有把本地运行时文件或密钥打进包
+          if tar -tzf "$PKG" | grep -E 'data\.json|deletes\.log|targets\.local\.json|\.workbuddy|/\.git/'; then
+            echo "::error::发布包内出现不应提交的文件"
+            exit 1
+          fi
+
+          # 确保启动脚本保留了可执行位
+          PERM=$(tar -tzvf "$PKG" | awk '/start\.command$/ {print $1}')
+          echo "start.command 权限: $PERM"
+          case "$PERM" in
+            -rwx*) echo "权限正确" ;;
+            *) echo "::error::start.command 丢失可执行权限"; exit 1 ;;
+          esac
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 手动发过的版本再次推同名 tag 时，改为覆盖资产而不是报错
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release 已存在，覆盖资产"
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi

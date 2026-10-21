@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 是项目声明的最低版本，3.13 是当前稳定版
+        python-version: ['3.9', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Show environment
+        run: |
+          python -V
+          sw_vers
+
+      - name: Run safety tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Verify scanner imports
+        run: python -c "import scanner, server; print('imports ok')"

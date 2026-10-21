@@ -7,6 +7,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
+[![CI](https://github.com/eddiezhan/CleanYourMac/actions/workflows/ci.yml/badge.svg)](https://github.com/eddiezhan/CleanYourMac/actions/workflows/ci.yml)
 
 ```
 ┌─────────────────────────────────────────────────┐
