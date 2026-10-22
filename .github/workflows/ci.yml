@@ -46,6 +46,17 @@ jobs:
           for a in r['apps']:
               assert 'leftovers' in a and isinstance(a['leftovers'], list)
               for f in a['leftovers']:
+                  # fuzzy 必须默认不勾选，其余必须默认勾选
                   assert f['default'] == (f['confidence'] != 'fuzzy'), f['path']
           print('scan ok')
           "
+
+      # 确认测试跑完没有往仓库里的审计日志写东西（测试必须用临时日志）
+      - name: Verify tests did not pollute the audit log
+        run: |
+          if [ -s deletes.log ]; then
+            echo "::error::测试向 deletes.log 写入了记录"
+            head -3 deletes.log
+            exit 1
+          fi
+          echo "审计日志干净"

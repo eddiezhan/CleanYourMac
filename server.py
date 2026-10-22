@@ -46,8 +46,8 @@ AUDIT_LOG = os.path.join(BASE_DIR, "deletes.log")
 
 PORT = int(os.environ.get("CMM_PORT", "8765"))
 
-# 版本号：发版时同步 README 与 git tag（v1.1.0 新增应用卸载）
-__version__ = "1.1.0"
+# 版本号：发版时同步 README 与 git tag（v1.1.0 新增应用卸载；v1.1.1 安全修复）
+__version__ = "1.1.1"
 
 # 允许操作的范围：用户家目录 + 当前用户的临时目录
 ALLOWED_ROOTS = [
@@ -300,11 +300,64 @@ class Handler(BaseHTTPRequestHandler):
         with open(file_path, "rb") as f:
             self._send(200, f.read(), ctype)
 
+    def _check_origin(self) -> tuple[int, str] | None:
+        """校验请求来源，返回 None 表示放行，否则返回 (HTTP 状态码, 错误信息)。
+
+        三条规则，任何一条不满足都拒绝：
+          1. Content-Type 必须是 application/json —— 非 JSON 属于 CORS
+             simple request，浏览器不会预检，恶意页面可以绕过同源策略
+          2. 带 Origin 时必须指向本机 —— 否则是别的站点发起的跨源请求
+          3. Host 必须是本机 —— 防止 DNS rebinding 把外部域名解析到 127.0.0.1
+        """
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            return 415, "请求必须使用 application/json"
+
+        origin = self.headers.get("Origin")
+        if origin is not None and origin not in self._local_origins():
+            return 403, f"来源不被允许：{origin}"
+
+        host = (self.headers.get("Host") or "").strip()
+        if host and host not in self._local_hosts():
+            return 403, f"Host 不被允许：{host}"
+        return None
+
+    def _local_hosts(self) -> set[str]:
+        """本机可接受的 Host 值（含端口）。
+
+        端口取自**实际监听的 socket** 而非模块常量 PORT：
+        测试与 CMM_PORT 覆盖时二者可能不同，读常量会把合法请求也拒掉。
+        """
+        port = self.server.server_address[1]
+        return {
+            f"127.0.0.1:{port}", f"localhost:{port}",
+            f"[::1]:{port}",
+            # 无端口的写法只在标准端口下才合理，这里一并接受，
+            # 因为浏览器不会省略非默认端口
+            "127.0.0.1", "localhost", "[::1]",
+        }
+
+    def _local_origins(self) -> set[str]:
+        """本机可接受的 Origin 值（scheme + host + port）。"""
+        hosts = self._local_hosts()
+        return {f"http://{h}" for h in hosts} | {f"https://{h}" for h in hosts}
+
     def do_POST(self):
         route = urlparse(self.path).path
         if route not in ("/api/trash", "/api/uninstall"):
             self._json(404, {"error": "not found"})
             return
+
+        # ---- 请求来源校验（必须在读 body、执行任何文件操作之前）----
+        # 本服务只监听 127.0.0.1，但浏览器允许任意网页向 localhost 发请求。
+        # text/plain 属于 CORS simple request，不触发预检，浏览器会照常送达 body；
+        # 攻击者读不到响应也不需要——应用路径可以猜，leftovers 传空就能删应用本体。
+        # 因此这里显式拒绝：非本机 Origin、非本机 Host、非 JSON 的 Content-Type。
+        denied = self._check_origin()
+        if denied:
+            self._json(denied[0], {"error": denied[1]})
+            return
+
         try:
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -351,6 +404,7 @@ class Handler(BaseHTTPRequestHandler):
 
         started = time.time()
         try:
+            # 走模块级 AUDIT_LOG（运行时可替换，便于测试不污染生产审计日志）
             out = uninstaller.uninstall(app_path, leftovers, audit_log=AUDIT_LOG)
         except Exception as e:  # 卸载异常也要给前端可读信息，而不是断连
             self._json(500, {"ok": False, "error": str(e)})

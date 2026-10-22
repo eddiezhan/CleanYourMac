@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
+from xml.parsers.expat import ExpatError
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scanner import du_bytes  # noqa: E402
@@ -95,7 +96,12 @@ def read_app_info(app_path: str) -> dict | None:
     try:
         with open(info_path, "rb") as f:
             plist = plistlib.load(f)
-    except (OSError, plistlib.InvalidFileException, ValueError):
+    except (OSError, plistlib.InvalidFileException, ValueError, ExpatError):
+        # 截断/损坏的 XML plist 抛的是 ExpatError，它不是 ValueError；
+        # 漏掉它会让一个坏 bundle 拖垮整轮扫描（GET /api/apps 直接 500）。
+        return None
+    except Exception:
+        # 任何其他解析异常同样只影响这一个应用，不应中断整轮扫描
         return None
     if not isinstance(plist, dict):
         return None
@@ -162,7 +168,12 @@ def is_running(app_path: str) -> bool:
     except (OSError, subprocess.SubprocessError):
         # 探测失败时保守地认为「可能在运行」，宁可拒绝也不误删正在写数据的应用
         return True
-    return bool(out.stdout.strip())
+    # pgrep 退出码：0 = 有匹配，1 = 无匹配，其他 = 出错。
+    # 路径含正则元字符（C++、[beta] 等）时 pgrep 会以 2 失败，
+    # 此时 stdout 为空——只看 stdout 会把它误判成「未运行」。
+    if out.returncode not in (0, 1):
+        return True
+    return out.returncode == 0 and bool(out.stdout.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +206,13 @@ def _app_name_tokens(app: dict) -> list[str]:
 
 
 def _bundle_id_matches(entry_lower: str, bundle_id: str) -> bool:
-    """判断目录项名是否属于该 Bundle ID，要求匹配结束在「组件边界」上。
+    """判断目录项名是否属于该 Bundle ID，两端都要求落在组件边界上。
 
     com.example.demo 应当命中 com.example.demo、com.example.demo.ShipIt、
-    com.example.demo-helper，但**不能**命中 com.example.demo2 或
-    com.example.demoExtra——那是另一个应用的 ID，只是共享前缀。
+    com.example.demo-helper，以及带团队 ID 前缀的
+    5A4RE8SF68.com.example.demo；但**不能**命中 com.example.demo2
+    （共享前缀）或 org.other.com.example.demo.tool（别人的 ID 把本应用 ID
+    夹在中间，那整条是另一个 Bundle ID）。
     """
     if not bundle_id:
         return False
@@ -209,10 +222,21 @@ def _bundle_id_matches(entry_lower: str, bundle_id: str) -> bool:
         if idx < 0:
             return False
         end = idx + len(bundle_id)
-        # 匹配结束处是结尾，或紧跟 . / - 分隔符，才算组件边界
-        if end == len(entry_lower) or entry_lower[end] in ".-":
+        end_ok = end == len(entry_lower) or entry_lower[end] in ".-"
+        if end_ok and _prefix_ok(entry_lower[:idx]):
             return True
         start = idx + 1
+
+
+def _prefix_ok(prefix: str) -> bool:
+    """匹配位置之前的前缀是否合法。
+
+    允许两种：空，或单个标签（团队 ID / group 之类，如 5A4RE8SF68.、group.）。
+    前缀本身还是域名形式（org.other.）说明这是别人的完整 Bundle ID，
+    本应用 ID 只是被夹在中间，不应认领。
+    """
+    p = prefix.rstrip(".-")
+    return "." not in p
 
 
 def classify_leftover(
@@ -278,8 +302,15 @@ def _classify_nested(child_name: str, app: dict, other_bundle_ids: set[str]) -> 
     """
     if any(o and _bundle_id_matches(child_name.lower(), o.lower()) for o in other_bundle_ids):
         return None
+    # 兄弟产品保护：子项名若等于「另一个已安装应用的 Bundle ID 末段」，
+    # 说明这个厂商子目录属于那个产品（如 Chrome 之于 Chrome Remote Desktop），
+    # 不能由本应用认领。
+    child_lower = child_name.lower()
+    for o in other_bundle_ids:
+        if o and o.lower().split(".")[-1] == child_lower:
+            return None
     # 子项名与应用名片段（来自名字 + Bundle ID）完全相等才算命中
-    return "fuzzy" if child_name.lower() in _app_name_tokens(app) else None
+    return "fuzzy" if child_lower in _app_name_tokens(app) else None
 
 
 def find_leftovers(app: dict, library: str, other_bundle_ids: set[str]) -> list[dict]:
@@ -386,13 +417,34 @@ def scan_apps(
 # ---------------------------------------------------------------------------
 # 卸载
 # ---------------------------------------------------------------------------
+def _safe_component(name: str) -> str:
+    """把任意字符串清洗成单个安全的路径片段。
+
+    应用名来自 bundle 的 CFBundleName，是不可信输入：可能含 "/"、
+    ".."、NUL。直接拼进废纸篓路径会建出嵌套目录，甚至逃出废纸篓。
+    """
+    cleaned = (name or "").replace("\x00", "").replace("/", "_").replace(os.sep, "_")
+    cleaned = cleaned.replace("..", "_").strip()
+    return cleaned or "item"
+
+
 def _unique_trash_path(trash_dir: str, name: str) -> str:
-    """在废纸篓中生成不冲突的目标路径。"""
-    candidate = os.path.join(trash_dir, name)
-    if not os.path.exists(candidate):
-        return candidate
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return os.path.join(trash_dir, f"{name} {stamp}")
+    """在废纸篓中生成不冲突的目标路径。
+
+    同一秒内可能处理多个同名残留（Caches/Demo、Containers/Demo…），
+    只靠秒级时间戳会撞车，导致 shutil.move 把它们合并进同一个目录。
+    这里用「探测后原子创建目录」的方式抢占目标名，抢不到就加序号重试。
+    """
+    base = _safe_component(name)
+    for i in range(1, 1000):
+        candidate = os.path.join(trash_dir, base if i == 1 else f"{base} {i}")
+        # 目标必须是废纸篓内的直接子项，不能是嵌套路径
+        if os.path.dirname(candidate) != trash_dir:
+            raise OSError(f"非法的废纸篓目标名: {name}")
+        # lexists：目标即使是失效软链也算占用，不能用 exists
+        if not os.path.lexists(candidate):
+            return candidate
+    raise OSError(f"废纸篓中同名条目过多: {base}")
 
 
 def _audit(audit_log: str | None, entry: dict) -> None:
@@ -411,6 +463,9 @@ def _json_line(obj: dict) -> str:
     return json.dumps(obj, ensure_ascii=False) + "\n"
 
 
+_UNSET = object()
+
+
 def uninstall(
     app_path: str,
     leftovers: list[str],
@@ -418,17 +473,21 @@ def uninstall(
     library: str | None = None,
     trash_dir: str | None = None,
     running_checker=is_running,
-    audit_log: str | None = None,
+    audit_log: str | None = _UNSET,  # type: ignore[assignment]
 ) -> dict:
     """把应用本体与指定的残留移入废纸篓。
 
     leftovers 是用户勾选的残留路径；服务端会重新计算一遍合法集合，
     只接受其中的路径——这样即使前端被篡改也无法删到别处。
+
+    audit_log 不传时写默认位置；显式传 None 表示**不写审计日志**
+    （测试用，避免污染仓库内的 deletes.log）。
     """
     roots = roots if roots is not None else DEFAULT_ROOTS
     library = library if library is not None else DEFAULT_LIBRARY
     trash_dir = trash_dir if trash_dir is not None else DEFAULT_TRASH
-    audit_log = audit_log if audit_log is not None else DEFAULT_AUDIT_LOG
+    if audit_log is _UNSET:
+        audit_log = DEFAULT_AUDIT_LOG
 
     def fail(error: str) -> dict:
         _audit(audit_log, {
@@ -438,8 +497,11 @@ def uninstall(
         return {"ok": False, "error": error, "moved": []}
 
     # 门禁 1：应用必须是扫描范围内真实存在的 .app
+    # 注意：scan_apps 对外给的是 ~ 相对路径，前端会原样回传，
+    # 而 realpath 不展开 ~——这里必须先 expanduser，否则 ~/Applications
+    # 下的每个应用都会被判成「未知应用」而永远无法卸载。
     installed = {os.path.realpath(a["path"]): a for a in list_apps(roots)}
-    app = installed.get(os.path.realpath(app_path))
+    app = installed.get(os.path.realpath(os.path.expanduser(app_path)))
     if not app:
         return fail("未知应用：不在扫描范围内，或不是合法的 .app")
 
@@ -481,11 +543,14 @@ def uninstall(
         base = os.path.basename(real_path.rstrip("/")) or "item"
         targets.append((real_path, f"uninstall__{app['name']}__{base}"))
 
-    for src, name in targets:
+    app_moved = False
+    for index, (src, name) in enumerate(targets):
         try:
             dst = _unique_trash_path(trash_dir, name)
             shutil.move(src, dst)
             moved.append({"from": src, "to": dst})
+            if index == 0:
+                app_moved = True
             _audit(audit_log, {
                 "time": datetime.now().isoformat(timespec="seconds"),
                 "action": "uninstall", "app": app["bundle_id"],
@@ -500,11 +565,17 @@ def uninstall(
                 "from": src, "result": "fail", "error": str(e),
             })
 
+    # ok 只认「应用本体确实被移走」：只删掉残留而应用还在时，
+    # 前端会把该行从列表移除并提示「已卸载」，用户会以为删干净了。
     return {
-        "ok": bool(moved),
+        "ok": app_moved,
+        "partial": bool(moved) and not app_moved,
+        "app_moved": app_moved,
         "moved": moved,
         "failed": failed,
-        "error": "" if moved else "没有任何文件被移动",
+        "error": "" if app_moved else (
+            "应用本体未能移除" + (f"：{failed[0]}" if failed else "")
+        ),
     }
 
 

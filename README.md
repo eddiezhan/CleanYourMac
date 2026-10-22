@@ -4,7 +4,7 @@
 
 不做永久删除，所有操作可在废纸篓中撤销。零第三方依赖，只用 Python 标准库。
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.1-blue)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -26,9 +26,9 @@
 └─────────────────────────────────────────────────┘
 
 ┌── 卸载应用 ──────────────────────────────────────┐
-│  Claude       com.anthropic...    12.4 GB  卸载  │
-│  Quark        com.quark.desktop    2.1 GB  卸载  │
-│  WeChat       com.tencent.xin...   1.4 GB  卸载  │
+│  Acme Editor  com.acme.editor     12.4 GB  卸载  │
+│  Beta Tools   com.beta.tools       2.1 GB  卸载  │
+│  Gamma App    com.gamma.app        1.4 GB  卸载  │
 │  Safari       com.apple.Safari       —   系统应用│
 └─────────────────────────────────────────────────┘
 ```
@@ -96,7 +96,7 @@ xattr -d com.apple.quarantine start.command 2>/dev/null
 
 磁盘卡片右侧的「清理后」数字会跟随勾选实时变化，未选择时不显示预测值。
 
-## 卸载应用（1.1.0 新增）
+## 卸载应用（1.1.0 新增，1.1.1 修复）
 
 macOS 直接删掉 `.app` 只会删掉本体，配置、缓存、容器还留在 `~/Library` 里，
 几十 GB 就这么被占着，而用户往往不知道它们在哪。
@@ -121,29 +121,28 @@ LaunchAgents  Cookies
 |---|---|---|
 | **Bundle ID 匹配** | 目录项包含该应用的 Bundle ID | ✅ 是 |
 | **名称匹配** | 目录项名（去掉 `.plist`）与应用名完全一致 | ✅ 是 |
-| **模糊匹配** | 名字包含应用名，或厂商两级嵌套（`Google/Chrome`） | ❌ **否，需手动勾选** |
+| **模糊匹配** | 名字包含应用名，或厂商两级嵌套（`<厂商>/<产品>`） | ❌ **否，需手动勾选** |
 
 低置信度项在弹窗里标黄，默认不选——宁可让用户多点一下，也不替他做误删决定。
 
 ### 两处容易误伤的地方，已经处理
 
-**一、别人的数据里有你的名字。** WeChat 按名字匹配会命中 WorkBuddy 的
-`Containers/com.tencent.workbuddy.mac.WechatShare`。因此凡命中「另一个已安装
-应用的 Bundle ID」的目录项会被直接排除；若有更长的他人 Bundle ID 也命中，
-以更精确的那个为准（Chrome 不会顺走 Chrome for Testing 的配置）。
+**一、别人的数据里有你的名字。** 两家厂商的 Bundle ID 常常互相包含，按名字
+或前缀匹配会把别人的容器当成自己的。因此凡命中「另一个已安装应用的 Bundle ID」
+的目录项会被直接排除；若有更长（更精确）的他人 Bundle ID 也命中，以更精确的
+那个为准——这样同一厂商的正式版不会顺走它测试版的配置。
 
 **二、`Preferences` 里的文件名就是 Bundle ID。** 那里必须精确相等，
-不能用前缀匹配——否则 `com.google.chrome.for.testing.plist` 会被
-`com.google.Chrome` 顺走，而 Chrome for Testing 未必同时装着，无法靠
-「其他应用」兜底。
+不能用前缀匹配——否则 `com.acme.app.for.testing.plist` 会被 `com.acme.app`
+顺走，而测试版未必同时装着，无法靠「其他应用」兜底。
 
 ### 厂商目录靠 Bundle ID 定位
 
-Chrome 的 `CFBundleName` 是 `Chrome`，光看名字猜不到它的数据在
-`Application Support/Google/Chrome`。所以厂商片段同时取自 Bundle ID 的反向
-域名段（`com.google.Chrome` → `google`），并且子目录名必须与片段**完全相等**
-才命中——`Google` 目录下并排放着 Chrome / Chrome Beta / Chrome Dev /
-Chrome for Testing，子串匹配会把兄弟产品一起删掉。
+很多应用的 `CFBundleName` 只有产品名，光看名字猜不到它挂在哪个厂商目录下
+（数据实际在 `Application Support/<厂商>/<产品>`）。所以厂商片段同时取自
+Bundle ID 的反向域名段（`com.vendor.Product` → `vendor`），并且子目录名必须
+与片段**完全相等**才命中——厂商目录下往往并排放着正式版 / Beta / Dev / 测试版，
+子串匹配会把兄弟产品一起删掉。
 
 ### 无法卸载的情况
 
@@ -153,6 +152,31 @@ Chrome for Testing，子串匹配会把兄弟产品一起删掉。
 | 应用正在运行 | 按钮置灰，标注「运行中」，先退出再卸载 |
 | root 安装、当前用户无权限 | 该项报错并说明，不做提权 |
 | 应用装在扫描范围外 | 列表里不出现，接口也拒绝 |
+
+## 更新记录
+
+### v1.1.1 — 安全修复
+
+独立代码审查发现并修复了以下问题，全部补了回归测试：
+
+| 严重度 | 问题 | 后果 |
+|---|---|---|
+| 严重 | `~/Applications` 下的应用全部无法卸载 | 对外给 `~` 相对路径，门禁用 `realpath`（不展开 `~`）比较，永远判「未知应用」 |
+| 严重 | 任意网页可触发卸载 | 无 Origin / Host / Content-Type 校验，`text/plain` 跨源请求不预检 |
+| 重要 | 一个损坏的 `Info.plist` 拖垮整个扫描 | 截断 XML 抛 `ExpatError`，它不是 `ValueError`，原 `except` 捕获不到 |
+| 重要 | 废纸篓目标名未清洗 | 应用名含 `/` 会建嵌套目录 |
+| 重要 | 同名残留进废纸篓时互相合并 | 只用秒级时间戳消歧，同一秒内多条同名残留被 `move` 进同一目录 |
+| 重要 | 应用本体没搬走却返回 `ok` | 前端移除列表行并提示「已卸载」，应用其实还在 |
+| 重要 | `is_running` 对含正则元字符的路径失效 | `pgrep -f` 把路径当 ERE，`C++` 之类退出码 2、stdout 为空，被误判「未运行」 |
+| 重要 | 发布流程的隐私检查从未真正执行 | macOS 的 bsdtar 不支持 `--wildcards`，报错被 `2>/dev/null` 吞掉，检查「通过」了空输入 |
+| 重要 | 同厂商兄弟产品认领厂商子目录 | 两个同厂商产品同时装着时，A 会认领 B 的 profile 目录 |
+| 次要 | 重复 Bundle ID 破坏列表行身份 | 同一应用在 `/Applications` 与 `~/Applications` 各一份时，点第二行操作的是第一行 |
+| 次要 | 第三方字符串未转义直接进 `innerHTML` | 恶意 `CFBundleName` 可在本页 origin 下执行脚本 |
+| 次要 | 测试污染生产审计日志 | 跑测试会往仓库内 `deletes.log` 写临时路径 |
+
+### v1.1.0 — 新增应用卸载
+
+应用本体与残留数据一并移入废纸篓。
 
 ## 安全设计
 
@@ -174,6 +198,25 @@ Chrome for Testing，子串匹配会把兄弟产品一起删掉。
 
 应用本体进废纸篓时保留 `.app` 后缀（`uninstall__<应用名>.app`），
 残留则是 `uninstall__<应用名>__<原名>`，拖回原位即可还原。
+
+### 请求来源校验（防 CSRF 与 DNS rebinding）
+
+服务只监听 `127.0.0.1`，但这**不代表**只有你自己能调用它——浏览器允许任意
+网页向 localhost 发请求，而 `text/plain` 属于 CORS simple request，**不触发
+预检**。也就是说，你随手打开的一个恶意页面就能构造请求删掉你的应用，
+它读不到响应也无所谓：应用路径可以猜，`leftovers` 传空就够了。
+
+因此所有 `POST` 在读取 body 之前先过三道校验，任何一条不满足直接拒绝：
+
+| 校验 | 拒绝码 | 防的是 |
+|---|---|---|
+| `Content-Type` 必须是 `application/json` | 415 | 跨源 simple request 绕过预检 |
+| 带 `Origin` 时必须指向本机 | 403 | 其他站点发起的跨源请求 |
+| `Host` 必须是本机 | 403 | DNS rebinding |
+
+另外，所有进入页面的第三方字符串（应用名、Bundle ID、路径）都经过 HTML 转义——
+一个 `CFBundleName` 为 `<img src=x onerror=...>` 的应用否则能在本页 origin 下
+执行脚本，进而调用卸载接口。
 
 所有操作写入 `deletes.log` 审计：
 
@@ -227,7 +270,8 @@ CleanYourMac/
 ├── server.py                  本地服务：/api/scan、/api/trash、/api/apps、/api/uninstall
 ├── static/index.html          前端界面（原生 JS，无构建步骤）
 ├── tests/test_safety.py       清理功能安全校验回归测试（13 项）
-├── tests/test_uninstall.py    卸载功能回归测试（28 项）
+├── tests/test_uninstall.py    卸载功能回归测试（39 项）
+├── tests/test_server_http.py  HTTP 层来源校验回归测试（5 项）
 ├── targets.local.example.json 自定义目标示例
 ├── start.command              macOS 双击启动
 ├── assets/donate/             捐赠二维码
@@ -235,7 +279,7 @@ CleanYourMac/
 └── deletes.log                操作审计（运行时生成，已忽略）
 ```
 
-运行测试（共 41 项）：
+运行测试（共 57 项）：
 
 ```bash
 python3 -m unittest discover -s tests -v

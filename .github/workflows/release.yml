@@ -60,13 +60,30 @@ jobs:
           fi
 
           # 隐私检查：源码与文档里不得出现本机用户名或家目录绝对路径
-          # （/Users/<name>、/home/<name>），避免把个人环境信息发出去
-          if tar -xzOf "$PKG" --wildcards '*.py' '*.html' '*.md' '*.json' 2>/dev/null \
-             | grep -nE '/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+'; then
+          # （/Users/<name>、/home/<name>），避免把个人环境信息发出去。
+          #
+          # 注意：macOS 自带的是 bsdtar，**不支持 --wildcards**；用它会让 tar
+          # 直接失败，而错误被 2>/dev/null 吞掉后 grep 拿到空输入，检查反而
+          # 「通过」。所以这里先解包到临时目录再 grep，并开启 pipefail，
+          # 任何一步失败都中止发布。
+          set -o pipefail
+          TMP_CHECK="$(mktemp -d)"
+          tar -xzf "$PKG" -C "$TMP_CHECK"
+          if grep -rnE '/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+' \
+               "$TMP_CHECK" --include='*.py' --include='*.html' \
+               --include='*.md' --include='*.json'; then
+            rm -rf "$TMP_CHECK"
             echo "::error::发布包内出现家目录绝对路径（含用户名）"
             exit 1
           fi
-          echo "隐私检查通过"
+          # 同时确认 tar 确实解出了文件，避免「检查了个空目录」式的假通过
+          COUNT=$(find "$TMP_CHECK" -name '*.py' | wc -l | tr -d ' ')
+          rm -rf "$TMP_CHECK"
+          if [ "$COUNT" -lt 3 ]; then
+            echo "::error::隐私检查没有扫描到足够的源文件（$COUNT 个），检查无效"
+            exit 1
+          fi
+          echo "隐私检查通过（扫描 $COUNT 个 .py 文件）"
 
           # 新功能文件必须在包里
           for f in uninstaller.py tests/test_uninstall.py; do

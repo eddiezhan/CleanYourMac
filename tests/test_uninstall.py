@@ -92,6 +92,30 @@ class TestAppInfo(TempCase):
         self.assertFalse(U.is_system_app(""))
 
 
+class TestIsRunning(unittest.TestCase):
+    def test_regex_metachar_path_is_conservative(self):
+        """回归：路径含正则元字符时 pgrep 会以退出码 2 失败。
+
+        原实现只看 stdout，于是把「探测失败」当成「未运行」，
+        正在运行的 C++ / [beta] 之类应用会被误判为可卸载。
+        """
+        # 造一个名字带 + 的路径；pgrep 会把它当 ERE 而报错
+        self.assertTrue(U.is_running("/Applications/C++.app"))
+
+    def test_missing_pgrep_is_conservative(self):
+        """pgrep 不存在时也应当保守地认为「可能在运行」。"""
+        original = U.subprocess.run
+
+        def boom(*a, **kw):
+            raise OSError("no pgrep")
+
+        U.subprocess.run = boom
+        try:
+            self.assertTrue(U.is_running("/Applications/Demo.app"))
+        finally:
+            U.subprocess.run = original
+
+
 class TestClassifyLeftover(TempCase):
     def setUp(self):
         super().setUp()
@@ -135,12 +159,26 @@ class TestClassifyLeftover(TempCase):
         self.assertEqual(
             U.classify_leftover("com.example.demo-helper", self.app, set()), "bundle")
 
+    def test_bundle_id_requires_start_boundary_too(self):
+        """回归：org.other.com.example.demo.tool 不能判成 bundle 级。
+
+        起点也必须是组件边界——否则别人的 Bundle ID 恰好把本应用 ID
+        夹在中间时，无关数据会被默认勾选。
+        """
+        self.assertNotEqual(
+            U.classify_leftover("org.other.com.example.demo.tool", self.app, set()),
+            "bundle")
+
     def test_other_app_bundle_id_excluded(self):
-        """回归：WeChat 不得认领 WorkBuddy 的 WechatShare 容器。"""
-        app = {"name": "WeChat", "bundle_id": "com.tencent.xinWeChat"}
-        others = {"com.tencent.workbuddy.mac"}
+        """回归：本应用不得认领「另一个已安装应用」的容器。
+
+        真实案例：两家厂商的 Bundle ID 互相包含，按名字匹配时 A 会命中
+        B 的共享容器（B 的 ID 里恰好含有 A 的名字）。
+        """
+        app = {"name": "Alpha", "bundle_id": "com.acme.alpha"}
+        others = {"com.acme.beta.mac"}
         self.assertIsNone(
-            U.classify_leftover("com.tencent.workbuddy.mac.WechatShare", app, others))
+            U.classify_leftover("com.acme.beta.mac.AlphaShare", app, others))
 
     def test_longest_bundle_id_wins(self):
         """回归：Chrome 不得认领 Chrome for Testing 的偏好文件。"""
@@ -167,6 +205,22 @@ class TestClassifyLeftover(TempCase):
 
 
 class TestFindLeftovers(TempCase):
+    def test_sibling_product_does_not_claim_vendor_child(self):
+        """回归：同厂商的兄弟产品不能认领对方的厂商子目录。
+
+        两个同厂商产品同时装着时，例如 Chrome Remote Desktop 与 Google Chrome，
+        Application Support/Google/Chrome 属于后者，前者不能以 fuzzy 认领——
+        用户勾上后卸载就会删掉另一个产品的 profile。
+        """
+        make_dir(self.library, "Application Support/Google/Chrome")
+        sibling = {"name": "Chrome Remote Desktop",
+                   "bundle_id": "com.google.chrome.remote_desktop"}
+        others = {"com.google.Chrome"}
+
+        found = U.find_leftovers(sibling, self.library, others)
+        chrome = os.path.join(self.library, "Application Support/Google/Chrome")
+        self.assertNotIn(chrome, {f["path"] for f in found})
+
     def test_finds_bundle_and_name_entries(self):
         make_dir(self.library, "Caches/com.example.demo")
         make_dir(self.library, "Application Support/Demo")
@@ -224,9 +278,9 @@ class TestFindLeftovers(TempCase):
             os.path.join(self.library, "Application Support/Google/Chrome Beta"), paths)
 
     def test_excludes_other_apps_containers(self):
-        make_dir(self.library, "Containers/com.tencent.workbuddy.mac.WechatShare")
-        app = {"name": "WeChat", "bundle_id": "com.tencent.xinWeChat"}
-        found = U.find_leftovers(app, self.library, {"com.tencent.workbuddy.mac"})
+        make_dir(self.library, "Containers/com.acme.beta.mac.AlphaShare")
+        app = {"name": "Alpha", "bundle_id": "com.acme.alpha"}
+        found = U.find_leftovers(app, self.library, {"com.acme.beta.mac"})
         self.assertEqual(found, [])
 
 
@@ -253,6 +307,37 @@ class TestScanApps(TempCase):
         self.assertEqual(flags["Safari"], (True, False))
         self.assertEqual(flags["Demo"], (False, True))
 
+    def test_scan_path_round_trips_into_uninstall(self):
+        """回归：scan_apps 返回的 path 必须能原样回传给 uninstall。
+
+        曾因对外给 ~ 相对路径、而门禁用 realpath 比较（不展开 ~），
+        导致 ~/Applications 下的应用全部无法卸载。
+        """
+        path = make_app(self.apps_root, "Demo", "com.example.demo")
+        out = U.scan_apps([self.apps_root], self.library, running_checker=lambda p: False)
+        api_path = out["apps"][0]["path"]
+
+        result = U.uninstall(
+            api_path, [], roots=[self.apps_root], library=self.library,
+            trash_dir=self.trash, running_checker=lambda p: False, audit_log=None,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(os.path.exists(path))
+
+    def test_corrupt_plist_does_not_break_scan(self):
+        """回归：某个应用的 Info.plist 损坏时，不能拖垮整个扫描。
+
+        截断的 XML 抛 ExpatError，它不是 ValueError，原实现的 except 捕获不到。
+        """
+        make_app(self.apps_root, "Good", "com.example.good")
+        bad = os.path.join(self.apps_root, "Bad.app", "Contents")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "Info.plist"), "w", encoding="utf-8") as f:
+            f.write('<?xml version="1.0"?><plist><dict><key>a</key>')
+
+        out = U.scan_apps([self.apps_root], self.library, running_checker=lambda p: False)
+        self.assertEqual([a["bundle_id"] for a in out["apps"]], ["com.example.good"])
+
 
 class TestUninstallGate(TempCase):
     def _demo(self):
@@ -265,6 +350,9 @@ class TestUninstallGate(TempCase):
         kw.setdefault("library", self.library)
         kw.setdefault("trash_dir", self.trash)
         kw.setdefault("running_checker", lambda p: False)
+        # 必须显式指定临时审计日志：不传会回落到仓库内的 deletes.log，
+        # 让跑测试变成往生产审计日志里写垃圾记录。
+        kw.setdefault("audit_log", os.path.join(self.tmp, "audit.log"))
         return U.uninstall(app_path, leftovers, **kw)
 
     def test_refuses_system_app(self):
@@ -321,6 +409,61 @@ class TestUninstallGate(TempCase):
         with open(log, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("com.example.demo", content)
+
+    def test_app_failure_is_not_reported_as_success(self):
+        """回归：应用本体没搬走、只有残留成功时，不能报 ok。
+
+        前端只判断 ok，会把该行从列表里移除并提示「已卸载」，
+        但应用其实还在——用户以为删掉了。
+        """
+        path, left = self._demo()
+        os.chmod(self.apps_root, 0o500)   # 让应用本体无法移动
+        try:
+            out = self._run(path, [left])
+        finally:
+            os.chmod(self.apps_root, 0o700)
+        self.assertFalse(out["ok"])
+        self.assertTrue(os.path.exists(path))
+        self.assertTrue(out["partial"], "应标记为部分完成")
+
+    def test_same_name_leftovers_do_not_collide_in_trash(self):
+        """回归：三个同名残留曾因秒级时间戳相同而在废纸篓里被合并成一个。
+
+        合并后拖回恢复会放错位置，审计日志也看不出发生过合并。
+        """
+        path = make_app(self.apps_root, "Demo", "com.example.demo")
+        leftovers = []
+        for sub in ("Caches", "Containers", "WebKit"):
+            d = make_dir(self.library, f"{sub}/Demo")
+            leftovers.append(d)
+
+        out = self._run(path, leftovers)
+        self.assertTrue(out["ok"], out)
+        # 应用本体 + 3 条残留 = 4 个独立条目，一个都不能少
+        self.assertEqual(len(os.listdir(self.trash)), 4, sorted(os.listdir(self.trash)))
+        self.assertEqual(out["failed"], [])
+
+    def test_trash_target_stays_inside_trash(self):
+        """回归：应用名含 / 或 .. 时，废纸篓目标路径必须仍落在废纸篓内。"""
+        path = make_app(self.apps_root, "Evil", "com.evil.x")
+        # 直接改 Info.plist 里的名字，模拟恶意 bundle
+        import plistlib as _pl
+        info = os.path.join(path, "Contents", "Info.plist")
+        with open(info, "wb") as f:
+            _pl.dump({"CFBundleIdentifier": "com.evil.x",
+                      "CFBundleName": "../../escape/name"}, f)
+        left = make_dir(self.library, "Caches/com.evil.x")
+
+        out = self._run(path, [left])
+        trash_real = os.path.realpath(self.trash)
+        for m in out["moved"]:
+            self.assertTrue(
+                os.path.realpath(m["to"]).startswith(trash_real + os.sep),
+                m["to"])
+        # 废纸篓之外不能凭空多出目录（audit.log 是本用例自己的审计日志）
+        self.assertEqual(
+            sorted(os.listdir(self.tmp)),
+            ["Applications", "Library", "Trash", "audit.log"], os.listdir(self.tmp))
 
     def test_duplicate_leftovers_moved_once(self):
         """回归：同一路径重复传入时只移动一次，第二次不应报错。"""

@@ -529,6 +529,16 @@ const state = {
 const RISK_LABEL = { safe: '可安全删', caution: '需确认', keep: '已保护' };
 const $ = (s) => document.querySelector(s);
 
+// 所有进入 innerHTML 的字符串都必须先过这里。
+// 应用名 / Bundle ID / 路径都来自磁盘上的第三方文件，属于不可信输入：
+// 一个 CFBundleName 为 "<img src=x onerror=...>" 的应用会在本页 origin 下执行脚本，
+// 进而可以对本机服务发起任意卸载请求。
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 function fmt(bytes) {
   if (!bytes) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -665,16 +675,16 @@ function render() {
     const disabled = it.risk === 'keep';
     const checked = state.selected.has(it.id) ? 'checked' : '';
     html += `
-      <div class="row" data-id="${it.id}">
-        <div class="cb"><input type="checkbox" ${checked} ${disabled ? 'disabled' : ''} aria-label="${it.name}"></div>
+      <div class="row" data-id="${esc(it.id)}">
+        <div class="cb"><input type="checkbox" ${checked} ${disabled ? 'disabled' : ''} aria-label="${esc(it.name)}"></div>
         <div class="info">
           <div class="title-line">
-            <span class="name">${it.name}</span>
-            <span class="badge ${it.risk}">${RISK_LABEL[it.risk]}</span>
-            <span class="badge cat">${it.category}</span>
+            <span class="name">${esc(it.name)}</span>
+            <span class="badge ${esc(it.risk)}">${esc(RISK_LABEL[it.risk])}</span>
+            <span class="badge cat">${esc(it.category)}</span>
           </div>
-          <div class="desc">${it.desc}</div>
-          <div class="paths">${it.paths.join('  ·  ')}</div>
+          <div class="desc">${esc(it.desc)}</div>
+          <div class="paths">${esc(it.paths.join('  ·  '))}</div>
         </div>
         <div class="size">${fmt(it.size)}${it.file_count > 1 ? `<small>${it.file_count} 个路径</small>` : ''}</div>
       </div>`;
@@ -770,7 +780,7 @@ $('#btnTrash').addEventListener('click', () => {
   const total = sel.reduce((s, i) => s + i.size, 0);
   $('#modalSub').textContent = `共 ${sel.length} 项，合计 ${fmt(total)}。请确认清单无误。`;
   $('#confirmList').innerHTML = sel.map(i =>
-    `<div class="confirm-item"><span class="cn">${i.name}</span><span class="cs">${fmt(i.size)}</span></div>`
+    `<div class="confirm-item"><span class="cn">${esc(i.name)}</span><span class="cs">${fmt(i.size)}</span></div>`
   ).join('');
   $('#mask').classList.add('show');
 });
@@ -917,17 +927,20 @@ function renderApps() {
     // 系统应用与运行中的应用都不可卸载，按钮置灰并说明原因
     const blocked = a.system ? '系统应用' : (a.running ? '运行中' : '');
     const lo = a.leftovers.length;
+    // 行身份用 path 而不是 bundle_id：同一应用可能同时存在于
+    // /Applications 与 ~/Applications（拷贝/备份），bundle_id 会重复，
+    // 点第二行会打开第一行的弹窗、删掉的也是第一行。
     return `
-      <div class="app-row" data-bid="${a.bundle_id}">
-        <div class="avatar" style="background:${av.color}">${av.ch}</div>
+      <div class="app-row" data-path="${esc(a.path)}">
+        <div class="avatar" style="background:${esc(av.color)}">${esc(av.ch)}</div>
         <div class="app-main">
           <div class="app-title">
-            <span class="app-name">${a.name}</span>
-            ${a.version ? `<span class="app-ver">${a.version}</span>` : ''}
+            <span class="app-name">${esc(a.name)}</span>
+            ${a.version ? `<span class="app-ver">${esc(a.version)}</span>` : ''}
             ${a.system ? '<span class="badge sys">系统应用</span>' : ''}
             ${a.running ? '<span class="badge run">运行中</span>' : ''}
           </div>
-          <div class="app-bid">${a.bundle_id || '（无 Bundle ID）'}</div>
+          <div class="app-bid">${esc(a.bundle_id || '（无 Bundle ID）')}</div>
         </div>
         <div class="app-size">
           <div class="main">${fmt(a.total_size)}</div>
@@ -935,8 +948,8 @@ function renderApps() {
         </div>
         <div>
           <button class="btn btn-danger" data-act="uninstall" ${blocked ? 'disabled' : ''}
-            title="${blocked ? blocked + '，无法卸载' : '卸载并清理残留'}">
-            ${blocked || '卸载'}
+            title="${esc(blocked ? blocked + '，无法卸载' : '卸载并清理残留')}">
+            ${esc(blocked || '卸载')}
           </button>
         </div>
       </div>`;
@@ -945,7 +958,7 @@ function renderApps() {
   $('#appList').querySelectorAll('[data-act="uninstall"]').forEach(btn => {
     btn.addEventListener('click', () => {
       const row = btn.closest('.app-row');
-      const app = state.apps.apps.find(x => x.bundle_id === row.dataset.bid);
+      const app = state.apps.apps.find(x => x.path === row.dataset.path);
       if (app) openUninstall(app);
     });
   });
@@ -989,7 +1002,7 @@ function openUninstall(app) {
     $('#uLeftoverList').innerHTML = lo.map((f, i) => `
       <label class="lo-item ${f.confidence === 'fuzzy' ? 'fuzzy' : ''}">
         <input type="checkbox" data-i="${i}" ${f.default ? 'checked' : ''}>
-        <span class="path">${f.path}<br><span class="muted">${CONF_LABEL[f.confidence]}</span></span>
+        <span class="path">${esc(f.path)}<br><span class="muted">${esc(CONF_LABEL[f.confidence])}</span></span>
         <span class="sz">${fmt(f.size)}</span>
       </label>`).join('');
     updateLeftoverSum();
@@ -1039,13 +1052,21 @@ $('#uConfirm').addEventListener('click', async () => {
       body: JSON.stringify({ app: app.path, leftovers }),
     });
     const out = await res.json();
-    if (!out.ok) throw new Error(out.error || '卸载失败');
+    // ok 只代表「应用本体确实被移走」。partial 表示只删掉了部分残留、
+    // 应用还在——此时绝不能移除列表行，也不能提示「已卸载」。
+    if (!out.ok) {
+      toast(out.error || '卸载失败', true);
+      state.apps = null;
+      setTimeout(() => loadApps(true), 400);
+      return;
+    }
 
-    const row = document.querySelector(`.app-row[data-bid="${app.bundle_id}"]`);
+    const row = document.querySelector(`.app-row[data-path="${CSS.escape(app.path)}"]`);
     if (row) { row.classList.add('removing'); setTimeout(() => row.remove(), 320); }
     toast(`已卸载「${app.name}」，${out.moved.length} 项移入废纸篓（${out.elapsed}s），可恢复`);
     if (out.failed && out.failed.length) {
-      toast(out.failed.join(' | '), true);
+      // 部分残留没能移动：如实告知，不要吞掉
+      toast('部分残留未能移入废纸篓：' + out.failed.join(' | '), true);
     }
     // 应用列表与清理扫描都变了，重新拉一遍
     state.apps = null;
