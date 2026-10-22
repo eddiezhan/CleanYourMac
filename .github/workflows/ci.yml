@@ -32,5 +32,20 @@ jobs:
       - name: Run safety tests
         run: python -m unittest discover -s tests -v
 
-      - name: Verify scanner imports
-        run: python -c "import scanner, server; print('imports ok')"
+      - name: Verify imports
+        run: python -c "import scanner, uninstaller, server; print('imports ok')"
+
+      # 卸载功能会触碰 /Applications 与 ~/Library，这里只做只读扫描，
+      # 确认在干净环境里不会抛异常、也不会删除任何东西
+      - name: Smoke test app scan (read-only)
+        run: |
+          python -c "
+          import uninstaller
+          r = uninstaller.scan_apps()
+          print('apps:', r['summary']['count'])
+          for a in r['apps']:
+              assert 'leftovers' in a and isinstance(a['leftovers'], list)
+              for f in a['leftovers']:
+                  assert f['default'] == (f['confidence'] != 'fuzzy'), f['path']
+          print('scan ok')
+          "

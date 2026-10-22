@@ -1,9 +1,10 @@
 # CleanYourMac
 
-**一个本地运行的 macOS 磁盘分析工具：扫描 → 分级 → 勾选 → 移入废纸篓。**
+**一个本地运行的 macOS 磁盘分析工具：扫描 → 分级 → 勾选 → 移入废纸篓，并能把应用连同它的残留数据一起卸干净。**
 
 不做永久删除，所有操作可在废纸篓中撤销。零第三方依赖，只用 Python 标准库。
 
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -22,6 +23,13 @@
 │  ☐ Chrome 缓存       2.86 GB   可安全删          │
 │  ☐ Xcode 归档包      1.40 GB   需确认            │
 │  ☐ 文档              2.10 GB   已保护 🔒         │
+└─────────────────────────────────────────────────┘
+
+┌── 卸载应用 ──────────────────────────────────────┐
+│  Claude       com.anthropic...    12.4 GB  卸载  │
+│  Quark        com.quark.desktop    2.1 GB  卸载  │
+│  WeChat       com.tencent.xin...   1.4 GB  卸载  │
+│  Safari       com.apple.Safari       —   系统应用│
 └─────────────────────────────────────────────────┘
 ```
 
@@ -88,6 +96,64 @@ xattr -d com.apple.quarantine start.command 2>/dev/null
 
 磁盘卡片右侧的「清理后」数字会跟随勾选实时变化，未选择时不显示预测值。
 
+## 卸载应用（1.1.0 新增）
+
+macOS 直接删掉 `.app` 只会删掉本体，配置、缓存、容器还留在 `~/Library` 里，
+几十 GB 就这么被占着，而用户往往不知道它们在哪。
+
+切到「卸载应用」标签，工具会枚举 `/Applications`、`/Applications/Utilities`
+和 `~/Applications` 下的所有应用，逐个算出**本体体积 + 残留体积**，点「卸载」
+即可把两者一起移入废纸篓。
+
+### 残留数据怎么找
+
+在 `~/Library` 下这 12 个目录里做一级枚举：
+
+```
+Application Support  Caches  Preferences  Containers  Group Containers
+Saved Application State  HTTPStorages  WebKit  Logs  Application Scripts
+LaunchAgents  Cookies
+```
+
+每个目录项按**三级置信度**判定归属：
+
+| 置信度 | 判定方式 | 默认勾选 |
+|---|---|---|
+| **Bundle ID 匹配** | 目录项包含该应用的 Bundle ID | ✅ 是 |
+| **名称匹配** | 目录项名（去掉 `.plist`）与应用名完全一致 | ✅ 是 |
+| **模糊匹配** | 名字包含应用名，或厂商两级嵌套（`Google/Chrome`） | ❌ **否，需手动勾选** |
+
+低置信度项在弹窗里标黄，默认不选——宁可让用户多点一下，也不替他做误删决定。
+
+### 两处容易误伤的地方，已经处理
+
+**一、别人的数据里有你的名字。** WeChat 按名字匹配会命中 WorkBuddy 的
+`Containers/com.tencent.workbuddy.mac.WechatShare`。因此凡命中「另一个已安装
+应用的 Bundle ID」的目录项会被直接排除；若有更长的他人 Bundle ID 也命中，
+以更精确的那个为准（Chrome 不会顺走 Chrome for Testing 的配置）。
+
+**二、`Preferences` 里的文件名就是 Bundle ID。** 那里必须精确相等，
+不能用前缀匹配——否则 `com.google.chrome.for.testing.plist` 会被
+`com.google.Chrome` 顺走，而 Chrome for Testing 未必同时装着，无法靠
+「其他应用」兜底。
+
+### 厂商目录靠 Bundle ID 定位
+
+Chrome 的 `CFBundleName` 是 `Chrome`，光看名字猜不到它的数据在
+`Application Support/Google/Chrome`。所以厂商片段同时取自 Bundle ID 的反向
+域名段（`com.google.Chrome` → `google`），并且子目录名必须与片段**完全相等**
+才命中——`Google` 目录下并排放着 Chrome / Chrome Beta / Chrome Dev /
+Chrome for Testing，子串匹配会把兄弟产品一起删掉。
+
+### 无法卸载的情况
+
+| 情况 | 表现 |
+|---|---|
+| 系统自带应用（`com.apple.*`） | 按钮置灰，标注「系统应用」 |
+| 应用正在运行 | 按钮置灰，标注「运行中」，先退出再卸载 |
+| root 安装、当前用户无权限 | 该项报错并说明，不做提权 |
+| 应用装在扫描范围外 | 列表里不出现，接口也拒绝 |
+
 ## 安全设计
 
 删除是不可逆操作，所以这里的原则是「宁可少删，不可错删」。五层门禁，任何一层不满足都会拒绝：
@@ -97,6 +163,17 @@ xattr -d com.apple.quarantine start.command 2>/dev/null
 3. **允许范围校验** — 展开后的真实路径必须位于家目录或当前用户临时目录之内
 4. **保护名单** — `~/.ssh`、`~/Downloads`、`~/Documents`、`~/Library/Keychains`、`/Applications` 等命中即拒绝
 5. **移入废纸篓而非删除** — 使用 `shutil.move` 移到 `~/.Trash`，文件名加目标 id 前缀便于辨认，**全程不使用 `rm`**
+
+卸载应用走的是另一套独立门禁（`uninstaller.py`），因为 `/Applications` 本身
+在清理功能的保护名单里。四层校验，任何一层不满足都整体拒绝：
+
+1. **应用必须真实存在** — 服务端重新枚举扫描目录，前端传来的路径只是「请求」不是「授权」
+2. **系统应用拒绝** — `com.apple.*` 一律不允许卸载
+3. **运行中拒绝** — 用 `pgrep` 匹配应用路径前缀，避免删掉正在写数据的应用
+4. **残留必须是重算集合的子集** — 每次卸载都重新跑一遍残留发现，只有落在结果里的路径才允许移动
+
+应用本体进废纸篓时保留 `.app` 后缀（`uninstall__<应用名>.app`），
+残留则是 `uninstall__<应用名>__<原名>`，拖回原位即可还原。
 
 所有操作写入 `deletes.log` 审计：
 
@@ -146,9 +223,11 @@ cp targets.local.example.json targets.local.json
 ```
 CleanYourMac/
 ├── scanner.py                 扫描器：目标清单 + 并发体积测量（只读）
-├── server.py                  本地服务：/api/scan、/api/trash + 五层门禁
+├── uninstaller.py             卸载器：应用枚举 + 残留发现 + 卸载门禁
+├── server.py                  本地服务：/api/scan、/api/trash、/api/apps、/api/uninstall
 ├── static/index.html          前端界面（原生 JS，无构建步骤）
-├── tests/test_safety.py       安全校验回归测试（13 项）
+├── tests/test_safety.py       清理功能安全校验回归测试（13 项）
+├── tests/test_uninstall.py    卸载功能回归测试（28 项）
 ├── targets.local.example.json 自定义目标示例
 ├── start.command              macOS 双击启动
 ├── assets/donate/             捐赠二维码
@@ -156,7 +235,7 @@ CleanYourMac/
 └── deletes.log                操作审计（运行时生成，已忽略）
 ```
 
-运行测试：
+运行测试（共 41 项）：
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -168,7 +247,8 @@ python3 -m unittest discover -s tests -v
 - **零依赖** — 只用标准库（`http.server`、`shutil`、`concurrent.futures`），不需要 pip install
 - **本地监听** — 只绑定 `127.0.0.1`，不对局域网暴露
 - **配置驱动** — 扫描逻辑与目标清单分离，加新目标不用改代码
-- **扫描缓存** — 服务端 5 秒结果缓存 + 互斥锁，避免连点重扫拖住机器
+- **扫描缓存** — 服务端 5 秒（清理）/ 30 秒（应用）结果缓存 + 互斥锁，避免连点重扫拖住机器
+- **不执行应用代码** — 卸载只读 `Contents/Info.plist`，不启动应用、不访问网络
 
 ## 已知限制
 
@@ -176,6 +256,10 @@ python3 -m unittest discover -s tests -v
 - **不含系统级日志** — `/private/var/db/diagnostics`、`powerlog` 等需要 sudo，本工具不做提权
 - **目录级粒度** — 不做重复文件检测、不逐个列出大文件
 - **不自动清理** — 不提供定时任务，避免在无人值守时误删
+- **残留发现只覆盖 `~/Library`** — 不扫 `/Library`（需 sudo）、`/usr/local`、`/opt` 等系统级位置；装在系统级位置的应用可能留尾巴
+- **不清理 LaunchServices 注册** — 移入废纸篓后 Dock 上可能残留一个失效图标，重启或重新登录后消失
+- **不卸载 Homebrew 包** — 只处理 `.app`；`brew` 安装的命令行工具请用 `brew uninstall`
+- **不做提权** — root 安装的应用会报权限错误，需要用户自行 `sudo` 处理
 
 ## FAQ
 
@@ -229,6 +313,25 @@ CMM_PORT=9000 ./start.command
 
 打开废纸篓，文件名为 `<目标id>__<原名>`，拖回原位置即可。`deletes.log` 里记录了每次操作的原始路径。
 
+卸载应用时是 `uninstall__<应用名>.app` 和 `uninstall__<应用名>__<原名>`，
+同样拖回原位即可。若应用已经从废纸篓清空，需要重新下载安装。
+
+**卸载按钮是灰的**
+
+两种情况：应用是系统自带的（标「系统应用」），或正在运行（标「运行中」）。
+后者先退出应用再刷新列表即可。
+
+**卸载后残留数据没删干净**
+
+本工具只扫 `~/Library` 下的 12 个目录，且低置信度项默认不勾选。
+如果确认某条标黄的路径确实属于该应用，卸载时手动勾上即可。
+装在 `/Library` 或 `/opt` 的组件需要手动清理。
+
+**卸载了一个应用，但另一个应用的数据也没了**
+
+这不应该发生——残留判定会排除「命中其他已安装应用 Bundle ID」的目录项。
+若真的遇到，请带上 `deletes.log` 里的记录提 issue，这是需要修的错误。
+
 ## 捐赠支持
 
 CleanYourMac 永久免费开源。如果它帮你清出了几十 GB 空间，请作者喝杯咖啡：
@@ -251,8 +354,9 @@ CleanYourMac 永久免费开源。如果它帮你清出了几十 GB 空间，请
 
 ## 免责声明
 
-本项目按「现状」提供，不对使用后果作任何担保。清理操作虽以移入废纸篓的方式实现，
-但仍建议在执行前确认清单内容。因使用本工具造成的数据丢失或其他损失，由使用者自行承担。
+本项目按「现状」提供，不对使用后果作任何担保。清理与卸载操作虽均以移入废纸篓的
+方式实现，但仍建议在执行前确认清单内容——尤其是标为「需确认」和「低置信度」的项。
+因使用本工具造成的数据丢失或其他损失，由使用者自行承担。
 
 ## License
 

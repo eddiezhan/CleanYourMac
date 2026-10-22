@@ -177,6 +177,83 @@
   }
   .size small { display: block; font-weight: 400; font-size: 11px; color: var(--text-3); }
 
+  /* ---------- 顶部 Tab ---------- */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .tab {
+    border: 0; background: transparent; font: inherit; font-size: 14px; font-weight: 520;
+    color: var(--text-2); padding: 10px 14px 12px; cursor: pointer; position: relative;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .15s, border-color .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab .cnt { color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 5px; font-weight: 500; }
+
+  /* ---------- 应用列表 ---------- */
+  .app-row {
+    display: grid; grid-template-columns: 40px 1fr auto auto;
+    gap: 14px; align-items: center;
+    padding: 13px 18px; border-bottom: 1px solid #f0f1f4; transition: background .12s;
+  }
+  .app-row:last-child { border-bottom: 0; }
+  .app-row:hover { background: #fcfcfd; }
+  .app-row.removing { opacity: 0; transform: translateX(12px); transition: opacity .3s, transform .3s; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 10px; display: flex;
+    align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 640; color: #fff; letter-spacing: -.02em;
+    user-select: none; flex: none;
+  }
+  .app-main { min-width: 0; }
+  .app-title { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 2px; }
+  .app-name { font-weight: 560; font-size: 14px; }
+  .app-ver { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .app-bid {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 11px; color: var(--text-3); word-break: break-all;
+  }
+  .app-size { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .app-size .main { font-weight: 600; font-size: 13.5px; }
+  .app-size .sub { font-size: 11px; color: var(--text-3); }
+  .badge.run { color: #0369a1; background: #e0f2fe; }
+  .badge.sys { color: var(--keep); background: var(--keep-soft); }
+
+  /* ---------- 卸载弹窗 ---------- */
+  .modal.wide { max-width: 640px; }
+  .lo-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; font-weight: 600; color: var(--text-2);
+    padding: 4px 0 8px; letter-spacing: .02em;
+  }
+  .lo-head .sum { font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .lo-item {
+    display: grid; grid-template-columns: 20px 1fr auto; gap: 10px; align-items: center;
+    padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px;
+    background: #fafbfc; margin-bottom: 6px;
+  }
+  .lo-item.fuzzy { background: var(--caution-soft); border-color: #fde68a; }
+  .lo-item .path {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 11.5px; color: var(--text-2); word-break: break-all; line-height: 1.45;
+  }
+  .lo-item .sz { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lo-item input {
+    appearance: none; width: 16px; height: 16px; border: 1.5px solid var(--border-strong);
+    border-radius: 4px; cursor: pointer; position: relative; background: #fff;
+  }
+  .lo-item input:checked { background: var(--accent); border-color: var(--accent); }
+  .lo-item input:checked::after {
+    content: ""; position: absolute; left: 4.5px; top: 1px; width: 4px; height: 8px;
+    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+  .app-self {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: #fff; margin-bottom: 10px;
+  }
+  .app-self .nm { font-weight: 560; font-size: 13.5px; }
+  .app-self .tg { margin-left: auto; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--text-3); font-size: 12.5px; }
+
   .empty { padding: 48px 20px; text-align: center; color: var(--text-3); }
   .empty .spin-lg {
     width: 22px; height: 22px; margin: 0 auto 14px;
@@ -270,6 +347,13 @@
     <h1>本地空间清理面板</h1>
   </header>
 
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="clean">空间清理</button>
+    <button class="tab" data-tab="apps">卸载应用 <span class="cnt" id="cApps"></span></button>
+  </nav>
+
+  <!-- ==================== 空间清理 ==================== -->
+  <div id="viewClean">
   <section class="disk-card">
     <div class="disk-top">
       <div class="disk-big" id="diskUsed">—</div>
@@ -327,6 +411,40 @@
   <div class="list" id="list">
     <div class="empty">正在扫描…</div>
   </div>
+  </div>
+
+  <!-- ==================== 卸载应用 ==================== -->
+  <div id="viewApps" hidden>
+    <section class="disk-card">
+      <div class="disk-top">
+        <div class="disk-big" id="appBig">—</div>
+        <div class="disk-sub" id="appSub">正在读取已安装应用…</div>
+      </div>
+      <div class="legend" style="margin-top:0">
+        <span>「应用 + 残留」为卸载后可释放的合计空间。残留数据按置信度分级，低置信度项默认不勾选。</span>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <div class="chips" id="appChips">
+        <button class="chip active" data-f="all">全部 <span class="cnt" id="caAll"></span></button>
+        <button class="chip" data-f="user">可卸载 <span class="cnt" id="caUser"></span></button>
+        <button class="chip" data-f="system">系统应用 <span class="cnt" id="caSys"></span></button>
+      </div>
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="appQ" type="search" placeholder="搜索应用名、Bundle ID…">
+      </div>
+      <button class="btn" id="btnAppRescan">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+        刷新应用
+      </button>
+    </div>
+
+    <div class="list" id="appList">
+      <div class="empty">正在读取已安装应用…</div>
+    </div>
+  </div>
 </div>
 
 <div class="actionbar">
@@ -359,6 +477,38 @@
   </div>
 </div>
 
+<div class="mask" id="appMask">
+  <div class="modal wide">
+    <div class="modal-hd">
+      <h2 id="uTitle">卸载应用？</h2>
+      <p id="uSub"></p>
+    </div>
+    <div class="modal-bd">
+      <div class="app-self">
+        <div class="avatar" id="uAvatar" style="width:30px;height:30px;font-size:13px;border-radius:8px"></div>
+        <span class="nm" id="uName"></span>
+        <span class="tg" id="uAppSize"></span>
+      </div>
+      <div id="uLeftoverWrap">
+        <div class="lo-head">
+          <span>残留数据</span>
+          <span class="sum" id="uLoSum"></span>
+        </div>
+        <div id="uLeftoverList"></div>
+      </div>
+      <div class="notice" id="uNotice">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span>应用与勾选的残留将<b>一并移入系统废纸篓</b>，可从废纸篓拖回恢复。
+          <b>标黄项</b>为低置信度匹配，可能不属于该应用，请自行确认后再勾选。</span>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn" id="uCancel">取消</button>
+      <button class="btn btn-danger" id="uConfirm">确认卸载</button>
+    </div>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
 
 <script>
@@ -368,6 +518,12 @@ const state = {
   query: '',
   selected: new Set(),
   busy: false,
+  // 卸载应用视图
+  tab: 'clean',
+  apps: null,
+  appFilter: 'all',
+  appQuery: '',
+  appsBusy: false,
 };
 
 const RISK_LABEL = { safe: '可安全删', caution: '需确认', keep: '已保护' };
@@ -664,8 +820,249 @@ $('#btnConfirm').addEventListener('click', async () => {
   }
 });
 
+// ===========================================================================
+// 卸载应用
+// ===========================================================================
+const CONF_LABEL = { bundle: 'Bundle ID 匹配', name: '名称匹配', fuzzy: '模糊匹配' };
+
+// 应用首字母头像：不读真实图标（需要解包 .icns），保持零依赖且不碰应用内部
+const AVATAR_COLORS = ['#2563eb', '#059669', '#b45309', '#7c3aed', '#be123c', '#0891b2', '#4d7c0f', '#c2410c'];
+function avatarFor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return { ch: (name.trim()[0] || '?').toUpperCase(), color: AVATAR_COLORS[h % AVATAR_COLORS.length] };
+}
+
+function switchTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  $('#viewClean').hidden = tab !== 'clean';
+  $('#viewApps').hidden = tab !== 'apps';
+  // 底部的「移入废纸篓」操作栏只属于清理视图
+  document.querySelector('.actionbar').style.display = tab === 'clean' ? '' : 'none';
+  if (tab === 'apps' && !state.apps) loadApps();
+}
+
+$('#tabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('.tab');
+  if (tab) switchTab(tab.dataset.tab);
+});
+
+async function loadApps(force = false) {
+  $('#appList').innerHTML = `<div class="empty">
+    <div class="spin-lg"></div>
+    <div>正在读取已安装应用…</div>
+    <div class="tip">需要逐个读取应用信息并统计残留体积，约 5–10 秒</div>
+  </div>`;
+  try {
+    const res = await fetch('/api/apps' + (force ? '?force=1' : ''), { cache: 'no-store' });
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`服务返回了非预期内容（HTTP ${res.status}）`);
+    }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    state.apps = data;
+    renderApps();
+  } catch (e) {
+    const offline = e instanceof TypeError ||
+      /Failed to fetch|NetworkError|load failed|fetch/i.test(e.message || '');
+    $('#appList').innerHTML = `<div class="empty">
+      <div style="font-size:15px;color:var(--text);font-weight:600;margin-bottom:8px">
+        ${offline ? '无法连接本地服务' : '读取应用失败'}
+      </div>
+      <div class="tip" style="max-width:480px;margin:0 auto 16px;line-height:1.8">
+        ${offline ? '请确认 <code>python3 server.py</code> 仍在运行。' : e.message}
+      </div>
+      <button class="btn btn-primary" onclick="loadApps(true)">重试</button>
+    </div>`;
+  }
+}
+
+function visibleApps() {
+  if (!state.apps) return [];
+  const q = state.appQuery.trim().toLowerCase();
+  return state.apps.apps.filter(a => {
+    if (state.appFilter === 'user' && a.system) return false;
+    if (state.appFilter === 'system' && !a.system) return false;
+    if (!q) return true;
+    return (a.name + a.bundle_id + a.path).toLowerCase().includes(q);
+  });
+}
+
+function renderApps() {
+  const d = state.apps;
+  if (!d) return;
+
+  $('#appBig').textContent = d.summary.count + ' 个应用';
+  $('#appSub').innerHTML = '应用本体 <b>' + fmt(d.summary.total - d.summary.leftover) + '</b>' +
+    ' · 残留数据 <b>' + fmt(d.summary.leftover) + '</b>' +
+    ' · 扫描于 ' + d.generated_at;
+  $('#cApps').textContent = d.summary.count;
+
+  const userCnt = d.apps.filter(a => !a.system).length;
+  $('#caAll').textContent = d.apps.length;
+  $('#caUser').textContent = userCnt;
+  $('#caSys').textContent = d.apps.length - userCnt;
+
+  const apps = visibleApps();
+  if (!apps.length) {
+    $('#appList').innerHTML = '<div class="empty">没有匹配的应用</div>';
+    return;
+  }
+
+  $('#appList').innerHTML = apps.map(a => {
+    const av = avatarFor(a.name);
+    // 系统应用与运行中的应用都不可卸载，按钮置灰并说明原因
+    const blocked = a.system ? '系统应用' : (a.running ? '运行中' : '');
+    const lo = a.leftovers.length;
+    return `
+      <div class="app-row" data-bid="${a.bundle_id}">
+        <div class="avatar" style="background:${av.color}">${av.ch}</div>
+        <div class="app-main">
+          <div class="app-title">
+            <span class="app-name">${a.name}</span>
+            ${a.version ? `<span class="app-ver">${a.version}</span>` : ''}
+            ${a.system ? '<span class="badge sys">系统应用</span>' : ''}
+            ${a.running ? '<span class="badge run">运行中</span>' : ''}
+          </div>
+          <div class="app-bid">${a.bundle_id || '（无 Bundle ID）'}</div>
+        </div>
+        <div class="app-size">
+          <div class="main">${fmt(a.total_size)}</div>
+          <div class="sub">本体 ${fmt(a.size)}${lo ? ` · 残留 ${fmt(a.leftover_size)}` : ''}</div>
+        </div>
+        <div>
+          <button class="btn btn-danger" data-act="uninstall" ${blocked ? 'disabled' : ''}
+            title="${blocked ? blocked + '，无法卸载' : '卸载并清理残留'}">
+            ${blocked || '卸载'}
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+
+  $('#appList').querySelectorAll('[data-act="uninstall"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.app-row');
+      const app = state.apps.apps.find(x => x.bundle_id === row.dataset.bid);
+      if (app) openUninstall(app);
+    });
+  });
+}
+
+$('#appChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  document.querySelectorAll('#appChips .chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  state.appFilter = chip.dataset.f;
+  renderApps();
+});
+
+$('#appQ').addEventListener('input', (e) => {
+  state.appQuery = e.target.value;
+  renderApps();
+});
+
+$('#btnAppRescan').addEventListener('click', () => { if (!state.appsBusy) loadApps(true); });
+
+// ---------- 卸载确认弹窗 ----------
+let pendingApp = null;
+
+function openUninstall(app) {
+  pendingApp = app;
+  const av = avatarFor(app.name);
+  $('#uAvatar').textContent = av.ch;
+  $('#uAvatar').style.background = av.color;
+  $('#uName').textContent = app.name;
+  $('#uAppSize').textContent = '本体 ' + fmt(app.size);
+  $('#uTitle').textContent = `卸载「${app.name}」？`;
+
+  const lo = app.leftovers;
+  $('#uSub').textContent = lo.length
+    ? `将删除应用本体与 ${lo.length} 处残留，合计约 ${fmt(app.total_size)}。`
+    : `该应用未发现残留数据，仅删除应用本体（${fmt(app.size)}）。`;
+
+  if (lo.length) {
+    $('#uLeftoverWrap').hidden = false;
+    $('#uLeftoverList').innerHTML = lo.map((f, i) => `
+      <label class="lo-item ${f.confidence === 'fuzzy' ? 'fuzzy' : ''}">
+        <input type="checkbox" data-i="${i}" ${f.default ? 'checked' : ''}>
+        <span class="path">${f.path}<br><span class="muted">${CONF_LABEL[f.confidence]}</span></span>
+        <span class="sz">${fmt(f.size)}</span>
+      </label>`).join('');
+    updateLeftoverSum();
+    $('#uLeftoverList').querySelectorAll('input').forEach(cb => {
+      cb.addEventListener('change', updateLeftoverSum);
+    });
+  } else {
+    $('#uLeftoverWrap').hidden = true;
+    $('#uLeftoverList').innerHTML = '';
+  }
+
+  $('#appMask').classList.add('show');
+}
+
+function updateLeftoverSum() {
+  if (!pendingApp) return;
+  const picked = [...$('#uLeftoverList').querySelectorAll('input:checked')]
+    .map(cb => pendingApp.leftovers[+cb.dataset.i]);
+  const size = picked.reduce((s, f) => s + f.size, 0);
+  const fuzzyCnt = picked.filter(f => f.confidence === 'fuzzy').length;
+  $('#uLoSum').innerHTML = `已选 ${picked.length}/${pendingApp.leftovers.length} 项 · ${fmt(size)}` +
+    (fuzzyCnt ? ` · <span style="color:var(--caution)">含 ${fuzzyCnt} 项低置信度</span>` : '');
+}
+
+function closeUninstall() {
+  $('#appMask').classList.remove('show');
+  pendingApp = null;
+}
+
+$('#uCancel').addEventListener('click', closeUninstall);
+$('#appMask').addEventListener('click', (e) => { if (e.target === $('#appMask')) closeUninstall(); });
+
+$('#uConfirm').addEventListener('click', async () => {
+  if (!pendingApp || state.appsBusy) return;
+  const app = pendingApp;
+  const leftovers = [...$('#uLeftoverList').querySelectorAll('input:checked')]
+    .map(cb => app.leftovers[+cb.dataset.i].path);
+
+  closeUninstall();
+  state.appsBusy = true;
+  const btn = $('#uConfirm');
+
+  try {
+    const res = await fetch('/api/uninstall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: app.path, leftovers }),
+    });
+    const out = await res.json();
+    if (!out.ok) throw new Error(out.error || '卸载失败');
+
+    const row = document.querySelector(`.app-row[data-bid="${app.bundle_id}"]`);
+    if (row) { row.classList.add('removing'); setTimeout(() => row.remove(), 320); }
+    toast(`已卸载「${app.name}」，${out.moved.length} 项移入废纸篓（${out.elapsed}s），可恢复`);
+    if (out.failed && out.failed.length) {
+      toast(out.failed.join(' | '), true);
+    }
+    // 应用列表与清理扫描都变了，重新拉一遍
+    state.apps = null;
+    setTimeout(() => { loadApps(true); state.data = null; }, 600);
+  } catch (e) {
+    toast('卸载失败：' + e.message, true);
+  } finally {
+    state.appsBusy = false;
+    btn.disabled = false;
+  }
+});
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $('#mask').classList.remove('show');
+  if (e.key === 'Escape') {
+    $('#mask').classList.remove('show');
+    closeUninstall();
+  }
 });
 
 load();

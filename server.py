@@ -5,8 +5,10 @@
 ============
 职责：
   - 提供静态 UI
-  - GET  /api/scan    → 实时扫描结果（只读）
-  - POST /api/trash   → 把选中的目标移入系统废纸篓
+  - GET  /api/scan       → 实时扫描结果（只读）
+  - POST /api/trash      → 把选中的目标移入系统废纸篓
+  - GET  /api/apps       → 已安装应用及其残留数据（只读）
+  - POST /api/uninstall  → 卸载应用并把残留一并移入废纸篓
 
 安全设计（这是本项目最关键的部分）：
   1. 只接受 TARGETS 中登记过的 id，无法通过任意路径删除
@@ -34,6 +36,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scanner import all_targets, expand, scan  # noqa: E402
+import uninstaller  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +45,9 @@ TRASH_DIR = os.path.join(HOME, ".Trash")
 AUDIT_LOG = os.path.join(BASE_DIR, "deletes.log")
 
 PORT = int(os.environ.get("CMM_PORT", "8765"))
+
+# 版本号：发版时同步 README 与 git tag（v1.1.0 新增应用卸载）
+__version__ = "1.1.0"
 
 # 允许操作的范围：用户家目录 + 当前用户的临时目录
 ALLOWED_ROOTS = [
@@ -211,8 +217,30 @@ def get_scan(force: bool = False) -> dict:
         return data
 
 
+# ---------------------------------------------------------------------------
+# 应用列表短缓存
+# 应用扫描要读几十个 Info.plist 并逐个 du，耗时与清理扫描同一量级。
+# 与 get_scan 同样用锁串行化，避免用户连点「刷新应用」时并发跑多轮。
+# ---------------------------------------------------------------------------
+_APPS_TTL = 30.0
+_apps_cache: dict[str, object] = {"at": 0.0, "data": None}
+_apps_lock = threading.Lock()
+
+
+def get_apps(force: bool = False) -> dict:
+    """返回应用扫描结果，必要时重新扫描。"""
+    with _apps_lock:
+        now = time.time()
+        if not force and _apps_cache["data"] is not None and now - _apps_cache["at"] < _APPS_TTL:
+            return _apps_cache["data"]  # type: ignore[return-value]
+        data = uninstaller.scan_apps()
+        _apps_cache["at"] = time.time()
+        _apps_cache["data"] = data
+        return data
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CleanMyMacUI/1.0"
+    server_version = f"CleanYourMac/{__version__}"
 
     def log_message(self, fmt, *args):  # 静音默认访问日志
         pass
@@ -241,6 +269,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"error": str(e)})
             return
 
+        if path == "/api/apps":
+            force = parse_qs(parsed.query).get("force", ["0"])[0] in ("1", "true", "yes")
+            try:
+                self._json(200, get_apps(force))
+            except Exception as e:
+                self._json(500, {"error": str(e)})
+            return
+
         if path in ("/", "/index.html"):
             file_path = os.path.join(STATIC_DIR, "index.html")
             ctype = "text/html; charset=utf-8"
@@ -265,7 +301,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, f.read(), ctype)
 
     def do_POST(self):
-        if urlparse(self.path).path != "/api/trash":
+        route = urlparse(self.path).path
+        if route not in ("/api/trash", "/api/uninstall"):
             self._json(404, {"error": "not found"})
             return
         try:
@@ -273,6 +310,10 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             self._json(400, {"error": "请求格式错误"})
+            return
+
+        if route == "/api/uninstall":
+            self._handle_uninstall(payload)
             return
 
         ids = payload.get("ids") or []
@@ -288,6 +329,38 @@ class Handler(BaseHTTPRequestHandler):
             **trash_items(ids),
             "elapsed": round(time.time() - started, 2),
         })
+
+    def _handle_uninstall(self, payload: dict) -> None:
+        """卸载应用：应用本体 + 用户勾选的残留，全部移入废纸篓。
+
+        服务端只把 app / leftovers 当「请求」而非「授权」：
+        uninstaller.uninstall 会重新枚举应用与残留集合并逐项校验，
+        前端伪造路径无法越权。
+        """
+        app_path = payload.get("app")
+        leftovers = payload.get("leftovers") or []
+        if not isinstance(app_path, str) or not app_path:
+            self._json(400, {"error": "缺少应用路径"})
+            return
+        if not isinstance(leftovers, list) or not all(isinstance(p, str) for p in leftovers):
+            self._json(400, {"error": "残留路径格式错误"})
+            return
+        if len(leftovers) > 200:
+            self._json(400, {"error": "单次最多处理 200 条残留"})
+            return
+
+        started = time.time()
+        try:
+            out = uninstaller.uninstall(app_path, leftovers, audit_log=AUDIT_LOG)
+        except Exception as e:  # 卸载异常也要给前端可读信息，而不是断连
+            self._json(500, {"ok": False, "error": str(e)})
+            return
+        # 卸载后应用列表与清理扫描都变了，两个缓存一起失效
+        with _apps_lock:
+            _apps_cache["data"] = None
+        with _scan_lock:
+            _scan_cache["data"] = None
+        self._json(200, {**out, "elapsed": round(time.time() - started, 2)})
 
 
 def main() -> None:

@@ -54,10 +54,27 @@ jobs:
           PKG="dist/CleanYourMac-${VERSION}.tar.gz"
 
           # 确保没有把本地运行时文件或密钥打进包
-          if tar -tzf "$PKG" | grep -E 'data\.json|deletes\.log|targets\.local\.json|\.workbuddy|/\.git/'; then
+          if tar -tzf "$PKG" | grep -E 'data\.json|deletes\.log|targets\.local\.json|\.workbuddy|/\.git/|\.claude/|__pycache__'; then
             echo "::error::发布包内出现不应提交的文件"
             exit 1
           fi
+
+          # 隐私检查：源码与文档里不得出现本机用户名或家目录绝对路径
+          # （/Users/<name>、/home/<name>），避免把个人环境信息发出去
+          if tar -xzOf "$PKG" --wildcards '*.py' '*.html' '*.md' '*.json' 2>/dev/null \
+             | grep -nE '/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+'; then
+            echo "::error::发布包内出现家目录绝对路径（含用户名）"
+            exit 1
+          fi
+          echo "隐私检查通过"
+
+          # 新功能文件必须在包里
+          for f in uninstaller.py tests/test_uninstall.py; do
+            if ! tar -tzf "$PKG" | grep -q "/$f\$"; then
+              echo "::error::发布包缺少 $f"
+              exit 1
+            fi
+          done
 
           # 确保启动脚本保留了可执行位
           PERM=$(tar -tzvf "$PKG" | awk '/start\.command$/ {print $1}')
