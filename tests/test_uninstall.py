@@ -527,5 +527,13 @@ class TestUninstallGate(TempCase):
         self.assertIsInstance(res["apps"][0]["needs_admin"], bool)
 
 
+    def test_move_via_finder_cleans_applescript_prefix(self):
+        """测试 Finder 错误信息清洗，去除 29:104: execution error: 等行号前缀。"""
+        import re
+        raw_err = '29:104: execution error: “Finder”遇到一个错误：无法完成此操作，因为你没有必要的权限。 (-5000)'
+        cleaned = re.sub(r'^\d+:\d+:\s*(execution error:\s*)?', '', raw_err).strip()
+        self.assertEqual(cleaned, '“Finder”遇到一个错误：无法完成此操作，因为你没有必要的权限。 (-5000)')
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

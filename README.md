@@ -288,7 +288,7 @@ CleanYourMac/
 └── deletes.log                操作审计（运行时生成，已忽略）
 ```
 
-运行测试（共 63 项）：
+运行测试（共 64 项）：
 
 ```bash
 python3 -m unittest discover -s tests -v

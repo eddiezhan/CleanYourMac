@@ -279,7 +279,10 @@ def _move_via_finder(posix_path: str, timeout: int = 30) -> tuple[bool, str]:
         err = proc.stderr.strip()
         if "-128" in err or "User canceled" in err:
             return False, "用户已取消管理员授权"
-        return False, err or "Finder 移入废纸篓失败"
+        import re
+        # 清除 AppleScript 行号前缀，如 29:104: execution error:
+        cleaned_err = re.sub(r'^\d+:\d+:\s*(execution error:\s*)?', '', err).strip()
+        return False, cleaned_err or "Finder 移入废纸篓失败"
     except subprocess.TimeoutExpired:
         return False, "等待管理员授权超时"
     except (OSError, subprocess.SubprocessError) as e:
@@ -668,16 +671,35 @@ def uninstall(
         except OSError as e:
             err_msg = str(e)
 
-        # 2. 如果是默认废纸篓且遇权限问题，尝试借助 Finder（可唤起系统 Touch ID/密码认证）
-        if not moved_ok and trash_dir == DEFAULT_TRASH:
+        # 2. 仅应用本体且遇权限问题时（如 App Store / root 安装），借助 Finder 调起系统 Touch ID/密码认证
+        # 注意：残留数据在 ~/Library 下属当前用户所有，绝不调用 Finder（避免 Finder 弹系统错误弹窗或报 -5000）
+        if not moved_ok and is_app and trash_dir == DEFAULT_TRASH:
             finder_ok, finder_err = _move_via_finder(src)
             if finder_ok:
                 moved_ok = True
                 dst = os.path.join(trash_dir, os.path.basename(src))
+                # 应用移走后稍等片刻，让系统 containermanagerd / LaunchServices 完成注销，避免残留容器被瞬时锁定
+                import time
+                time.sleep(0.3)
             else:
                 err_msg = finder_err or err_msg
 
-        # 3. 兜底：非默认废纸篓（如测试环境临时目录跨卷）
+        # 3. 残留数据重试：若遇瞬时锁定（如 containermanagerd 正在同步），重试 3 次
+        if not moved_ok and not is_app:
+            import time
+            for _ in range(3):
+                time.sleep(0.3)
+                if not os.path.exists(src):
+                    moved_ok = True
+                    break
+                try:
+                    os.rename(src, dst)
+                    moved_ok = True
+                    break
+                except OSError as e:
+                    err_msg = str(e)
+
+        # 4. 兜底：非默认废纸篓（如测试环境临时目录跨卷）
         if not moved_ok and trash_dir != DEFAULT_TRASH:
             try:
                 shutil.move(src, dst)
