@@ -116,5 +116,26 @@ class TestOriginGate(ServerCase):
         self.assertEqual(status, 415, body)
 
 
+    def test_app_icon_missing_path(self):
+        """缺少 path 参数应返回 400。"""
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/app-icon")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                status = r.status
+        except urllib.error.HTTPError as e:
+            status = e.code
+        self.assertEqual(status, 400)
+
+    def test_app_icon_unauthorized_path(self):
+        """试图读取非扫描范围或非应用路径应返回 403。"""
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/app-icon?path=/etc/shadow")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                status = r.status
+        except urllib.error.HTTPError as e:
+            status = e.code
+        self.assertEqual(status, 403)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

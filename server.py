@@ -47,7 +47,7 @@ AUDIT_LOG = os.path.join(BASE_DIR, "deletes.log")
 PORT = int(os.environ.get("CMM_PORT", "8765"))
 
 # 版本号：发版时同步 README 与 git tag（v1.1.0 新增应用卸载；v1.1.1 安全修复）
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 # 允许操作的范围：用户家目录 + 当前用户的临时目录
 ALLOWED_ROOTS = [
@@ -218,6 +218,23 @@ def get_scan(force: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 应用图标缓存
+# 图标转换（sips）只需执行一次，缓存于内存中供前端高频加载
+# ---------------------------------------------------------------------------
+_icon_cache: dict[str, bytes | None] = {}
+_icon_lock = threading.Lock()
+
+
+def get_app_icon(app_path: str) -> bytes | None:
+    with _icon_lock:
+        if app_path in _icon_cache:
+            return _icon_cache[app_path]
+        png = uninstaller.get_app_icon_png(app_path, size=64)
+        _icon_cache[app_path] = png
+        return png
+
+
+# ---------------------------------------------------------------------------
 # 应用列表短缓存
 # 应用扫描要读几十个 Info.plist 并逐个 du，耗时与清理扫描同一量级。
 # 与 get_scan 同样用锁串行化，避免用户连点「刷新应用」时并发跑多轮。
@@ -275,6 +292,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, get_apps(force))
             except Exception as e:
                 self._json(500, {"error": str(e)})
+            return
+
+        if path == "/api/app-icon":
+            # 读取应用图标（转换为 PNG，带内存缓存）
+            app_path = parse_qs(parsed.query).get("path", [""])[0]
+            if not app_path:
+                self._send(400, b"missing path", "text/plain")
+                return
+            real_path = os.path.realpath(os.path.expanduser(app_path))
+            # 安全门禁：路径必须属于扫描范围内的已知应用，防止路径穿越探测任意文件
+            known_apps = {os.path.realpath(a["path"]) for a in uninstaller.list_apps(uninstaller.DEFAULT_ROOTS)}
+            if real_path not in known_apps:
+                self._send(403, b"forbidden", "text/plain")
+                return
+
+            icon_bytes = get_app_icon(real_path)
+            if not icon_bytes:
+                self._send(404, b"icon not found", "text/plain")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(icon_bytes)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(icon_bytes)
             return
 
         if path in ("/", "/index.html"):

@@ -496,5 +496,36 @@ class TestUninstallGate(TempCase):
         self.assertTrue(os.path.exists(path))
 
 
+    def test_is_admin_required(self):
+        """测试管理员权限判定。"""
+        import uninstaller
+        # 不存在的路径返回 False
+        self.assertFalse(uninstaller.is_admin_required("/tmp/non_existent.app"))
+        # 临时目录创建的应用，当前用户所有且有写权限 -> False
+        path = make_app(self.apps_root, "AdminTest", "com.example.admin")
+        self.assertFalse(uninstaller.is_admin_required(path))
+        # 移除写权限后 -> True
+        try:
+            os.chmod(path, 0o555)
+            self.assertTrue(uninstaller.is_admin_required(path))
+        finally:
+            os.chmod(path, 0o755)
+
+    def test_get_app_icon_invalid_path(self):
+        """非法路径读取图标应返回 None，不抛出异常。"""
+        import uninstaller
+        self.assertIsNone(uninstaller.get_app_icon_png("/tmp/non_existent.app"))
+        self.assertIsNone(uninstaller.get_app_icon_png(self.tmp))
+
+    def test_scan_apps_includes_needs_admin(self):
+        """扫描结果中必须包含 needs_admin 字段。"""
+        import uninstaller
+        path = make_app(self.apps_root, "AdminTest2", "com.example.admin2")
+        res = uninstaller.scan_apps(roots=[self.apps_root], library=self.library)
+        self.assertEqual(len(res["apps"]), 1)
+        self.assertIn("needs_admin", res["apps"][0])
+        self.assertIsInstance(res["apps"][0]["needs_admin"], bool)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

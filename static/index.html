@@ -197,6 +197,15 @@
   .app-row:last-child { border-bottom: 0; }
   .app-row:hover { background: #fcfcfd; }
   .app-row.removing { opacity: 0; transform: translateX(12px); transition: opacity .3s, transform .3s; }
+  .icon-wrap {
+    width: 40px; height: 40px; border-radius: 10px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; flex: none;
+    position: relative;
+  }
+  .app-icon {
+    width: 100%; height: 100%; object-fit: contain; border-radius: 9px;
+    display: block;
+  }
   .avatar {
     width: 40px; height: 40px; border-radius: 10px; display: flex;
     align-items: center; justify-content: center;
@@ -216,6 +225,7 @@
   .app-size .sub { font-size: 11px; color: var(--text-3); }
   .badge.run { color: #0369a1; background: #e0f2fe; }
   .badge.sys { color: var(--keep); background: var(--keep-soft); }
+  .badge.admin { color: #4338ca; background: #e0e7ff; }
 
   /* ---------- 卸载弹窗 ---------- */
   .modal.wide { max-width: 640px; }
@@ -485,7 +495,12 @@
     </div>
     <div class="modal-bd">
       <div class="app-self">
-        <div class="avatar" id="uAvatar" style="width:30px;height:30px;font-size:13px;border-radius:8px"></div>
+        <div class="icon-wrap" style="width:34px;height:34px">
+          <img id="uIcon" class="app-icon" src="" alt="" style="display:none"
+               onload="this.style.display='block'; $('#uAvatar').style.display='none'"
+               onerror="this.style.display='none'; $('#uAvatar').style.display='flex'">
+          <div class="avatar" id="uAvatar" style="width:34px;height:34px;font-size:14px;border-radius:8px"></div>
+        </div>
         <span class="nm" id="uName"></span>
         <span class="tg" id="uAppSize"></span>
       </div>
@@ -932,12 +947,17 @@ function renderApps() {
     // 点第二行会打开第一行的弹窗、删掉的也是第一行。
     return `
       <div class="app-row" data-path="${esc(a.path)}">
-        <div class="avatar" style="background:${esc(av.color)}">${esc(av.ch)}</div>
+        <div class="icon-wrap">
+          <img class="app-icon" src="/api/app-icon?path=${encodeURIComponent(a.path)}" alt="${esc(a.name)}"
+               onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+          <div class="avatar" style="background:${esc(av.color)};display:none">${esc(av.ch)}</div>
+        </div>
         <div class="app-main">
           <div class="app-title">
             <span class="app-name">${esc(a.name)}</span>
             ${a.version ? `<span class="app-ver">${esc(a.version)}</span>` : ''}
             ${a.system ? '<span class="badge sys">系统应用</span>' : ''}
+            ${!a.system && a.needs_admin ? '<span class="badge admin" title="由 App Store 或管理员安装，卸载时系统将提示认证">需管理员权限</span>' : ''}
             ${a.running ? '<span class="badge run">运行中</span>' : ''}
           </div>
           <div class="app-bid">${esc(a.bundle_id || '（无 Bundle ID）')}</div>
@@ -988,6 +1008,10 @@ function openUninstall(app) {
   const av = avatarFor(app.name);
   $('#uAvatar').textContent = av.ch;
   $('#uAvatar').style.background = av.color;
+  $('#uAvatar').style.display = 'none';
+  const uIcon = $('#uIcon');
+  uIcon.style.display = 'block';
+  uIcon.src = '/api/app-icon?path=' + encodeURIComponent(app.path);
   $('#uName').textContent = app.name;
   $('#uAppSize').textContent = '本体 ' + fmt(app.size);
   $('#uTitle').textContent = `卸载「${app.name}」？`;
@@ -1068,9 +1092,25 @@ $('#uConfirm').addEventListener('click', async () => {
       // 部分残留没能移动：如实告知，不要吞掉
       toast('部分残留未能移入废纸篓：' + out.failed.join(' | '), true);
     }
-    // 应用列表与清理扫描都变了，重新拉一遍
-    state.apps = null;
-    setTimeout(() => { loadApps(true); state.data = null; }, 600);
+    // 乐观局部更新：从本地状态直接移除，无需重扫全盘（避免每次删除都等待 5–10 秒）
+    if (state.apps && Array.isArray(state.apps.apps)) {
+      state.apps.apps = state.apps.apps.filter(x => x.path !== app.path);
+      state.apps.summary.count = state.apps.apps.length;
+      state.apps.summary.total = Math.max(0, state.apps.summary.total - app.total_size);
+      state.apps.summary.leftover = Math.max(0, state.apps.summary.leftover - app.leftover_size);
+      $('#appBig').textContent = state.apps.summary.count + ' 个应用';
+      $('#appSub').innerHTML = '应用本体 <b>' + fmt(state.apps.summary.total - state.apps.summary.leftover) + '</b>' +
+        ' · 残留数据 <b>' + fmt(state.apps.summary.leftover) + '</b> · 已卸载「' + esc(app.name) + '」';
+      $('#cApps').textContent = state.apps.summary.count;
+      const userCnt = state.apps.apps.filter(a => !a.system).length;
+      $('#caAll').textContent = state.apps.apps.length;
+      $('#caUser').textContent = userCnt;
+      $('#caSys').textContent = state.apps.apps.length - userCnt;
+      if (!visibleApps().length) {
+        $('#appList').innerHTML = '<div class="empty">没有匹配的应用</div>';
+      }
+    }
+    state.data = null; // 标记清理视图缓存失效，下次切回时再重扫
   } catch (e) {
     toast('卸载失败：' + e.message, true);
   } finally {

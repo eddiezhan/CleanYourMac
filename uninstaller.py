@@ -177,6 +177,116 @@ def is_running(app_path: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 应用图标与权限辅助
+# ---------------------------------------------------------------------------
+def is_admin_required(app_path: str) -> bool:
+    """判断应用是否需要管理员权限才能卸载（如 App Store 下载或 root 安装）。"""
+    real_path = os.path.realpath(os.path.expanduser(app_path))
+    if not os.path.exists(real_path):
+        return False
+    try:
+        st = os.stat(real_path)
+        # 非当前用户所有，或者当前用户无写权限
+        if st.st_uid != os.getuid() or not os.access(real_path, os.W_OK):
+            return True
+        parent = os.path.dirname(real_path)
+        if not os.access(parent, os.W_OK):
+            return True
+        return False
+    except OSError:
+        return True
+
+
+def get_app_icon_png(app_path: str, size: int = 64) -> bytes | None:
+    """提取 .app 的图标并转换为 PNG 字节流。
+
+    利用 macOS 自带的 sips 工具转换 .icns，零第三方依赖。
+    找不到图标或转换失败时返回 None。
+    """
+    real_path = os.path.realpath(os.path.expanduser(app_path))
+    if not os.path.isdir(real_path) or not real_path.endswith(".app"):
+        return None
+    info_path = os.path.join(real_path, "Contents", "Info.plist")
+    if not os.path.isfile(info_path):
+        return None
+    try:
+        with open(info_path, "rb") as f:
+            plist = plistlib.load(f)
+    except Exception:
+        return None
+    if not isinstance(plist, dict):
+        return None
+
+    icon_name = str(plist.get("CFBundleIconFile") or plist.get("CFBundleIconName") or "").strip()
+    candidates: list[str] = []
+    if icon_name:
+        if not icon_name.endswith(".icns"):
+            candidates.append(icon_name + ".icns")
+        candidates.append(icon_name)
+    candidates.append("AppIcon.icns")
+
+    res_dir = os.path.join(real_path, "Contents", "Resources")
+    icns_path = None
+    for cand in candidates:
+        cand_path = os.path.join(res_dir, cand)
+        if os.path.isfile(cand_path):
+            icns_path = cand_path
+            break
+    if not icns_path and os.path.isdir(res_dir):
+        import glob
+        all_icns = sorted(glob.glob(os.path.join(res_dir, "*.icns")))
+        if all_icns:
+            icns_path = all_icns[0]
+
+    if not icns_path:
+        return None
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_png = tmp.name
+    try:
+        cmd = ["sips", "-s", "format", "png", "-Z", str(size), icns_path, "--out", tmp_png]
+        subprocess.run(cmd, capture_output=True, timeout=5, check=True)
+        with open(tmp_png, "rb") as f:
+            return f.read()
+    except Exception:
+        return None
+    finally:
+        if os.path.exists(tmp_png):
+            try:
+                os.remove(tmp_png)
+            except OSError:
+                pass
+
+
+def _move_via_finder(posix_path: str, timeout: int = 30) -> tuple[bool, str]:
+    """通过 Finder 把文件移入废纸篓。
+
+    对于 root 安装或 App Store 下载的应用（当前用户无直接写入/重命名权限），
+    Finder 会调起系统原生的 Touch ID / 管理员密码认证窗口完成移入废纸篓。
+    """
+    escaped_path = posix_path.replace(chr(92), chr(92) + chr(92)).replace(chr(34), chr(92) + chr(34))
+    script = f'tell application "Finder" to delete POSIX file "{escaped_path}"'
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode == 0:
+            return True, ""
+        err = proc.stderr.strip()
+        if "-128" in err or "User canceled" in err:
+            return False, "用户已取消管理员授权"
+        return False, err or "Finder 移入废纸篓失败"
+    except subprocess.TimeoutExpired:
+        return False, "等待管理员授权超时"
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"调用 Finder 失败: {e}"
+
+
+# ---------------------------------------------------------------------------
 # 残留匹配
 # ---------------------------------------------------------------------------
 def _app_name_tokens(app: dict) -> list[str]:
@@ -398,6 +508,7 @@ def scan_apps(
             "leftover_size": leftover_size,
             "total_size": app_size + leftover_size,
             "system": is_system_app(app["bundle_id"]),
+            "needs_admin": is_admin_required(app["path"]),
             "running": running_checker(app["path"]),
             "leftovers": leftovers,
         })
@@ -545,24 +656,50 @@ def uninstall(
 
     app_moved = False
     for index, (src, name) in enumerate(targets):
+        is_app = (index == 0)
+        dst = _unique_trash_path(trash_dir, name)
+        moved_ok = False
+        err_msg = ""
+
+        # 1. 优先尝试直接原子 rename 到废纸篓（最快、最安全、绝不使用 rm）
         try:
-            dst = _unique_trash_path(trash_dir, name)
-            shutil.move(src, dst)
+            os.rename(src, dst)
+            moved_ok = True
+        except OSError as e:
+            err_msg = str(e)
+
+        # 2. 如果是默认废纸篓且遇权限问题，尝试借助 Finder（可唤起系统 Touch ID/密码认证）
+        if not moved_ok and trash_dir == DEFAULT_TRASH:
+            finder_ok, finder_err = _move_via_finder(src)
+            if finder_ok:
+                moved_ok = True
+                dst = os.path.join(trash_dir, os.path.basename(src))
+            else:
+                err_msg = finder_err or err_msg
+
+        # 3. 兜底：非默认废纸篓（如测试环境临时目录跨卷）
+        if not moved_ok and trash_dir != DEFAULT_TRASH:
+            try:
+                shutil.move(src, dst)
+                moved_ok = True
+            except OSError as e:
+                err_msg = str(e)
+
+        if moved_ok:
             moved.append({"from": src, "to": dst})
-            if index == 0:
+            if is_app:
                 app_moved = True
             _audit(audit_log, {
                 "time": datetime.now().isoformat(timespec="seconds"),
                 "action": "uninstall", "app": app["bundle_id"],
                 "from": src, "to": dst, "result": "ok",
             })
-        except OSError as e:
-            # 单个失败不中断整体：可能是权限不足（root 安装的应用）
-            failed.append(f"{src}: {e}")
+        else:
+            failed.append(f"{src}: {err_msg}")
             _audit(audit_log, {
                 "time": datetime.now().isoformat(timespec="seconds"),
                 "action": "uninstall", "app": app["bundle_id"],
-                "from": src, "result": "fail", "error": str(e),
+                "from": src, "result": "fail", "error": err_msg,
             })
 
     # ok 只认「应用本体确实被移走」：只删掉残留而应用还在时，

@@ -4,7 +4,7 @@
 
 不做永久删除，所有操作可在废纸篓中撤销。零第三方依赖，只用 Python 标准库。
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -150,10 +150,19 @@ Bundle ID 的反向域名段（`com.vendor.Product` → `vendor`），并且子�
 |---|---|
 | 系统自带应用（`com.apple.*`） | 按钮置灰，标注「系统应用」 |
 | 应用正在运行 | 按钮置灰，标注「运行中」，先退出再卸载 |
-| root 安装、当前用户无权限 | 该项报错并说明，不做提权 |
+| root / App Store 安装 | 标注「需管理员权限」，卸载时系统调起 Touch ID / 密码认证放行移入废纸篓 |
 | 应用装在扫描范围外 | 列表里不出现，接口也拒绝 |
 
 ## 更新记录
+
+### v1.2.0 — 应用真实图标 + 乐观无感移除 + 权限应用卸载支持
+
+- **应用真实图标显示**：利用 macOS 自带的 `sips` 命令行工具从 bundle 内提取 `.icns` 并转为 PNG（64x64），服务端内存缓存；前端无缝优先展示真实高精图标，加载失败时自动平滑 fallback 到首字母头像。
+- **乐观局部更新**：卸载应用成功后直接在前端移除卡片行并就地更新统计数值，不再全盘重新触发耗时 5–10 秒的扫描，连续卸载流畅无卡顿。
+- **App Store / root 权限应用卸载支持（解决 ServerCat 等应用报错）**：
+  - 针对 App Store 及管理员权限安装的应用（如 ServerCat），优先尝试原子 rename；若遇到系统写权限不足，自动调用 Finder 原生废纸篓通道唤起系统 Touch ID / 管理员密码授权完成移入废纸篓。
+  - 修复 `~/Library/Containers` 残留移动时触发 `copytree` 导致 `.com.apple.containermanagerd.metadata.plist` 抛出 `Operation not permitted` 的缺陷。
+  - 列表行增加「需管理员权限」徽章提示。
 
 ### v1.1.1 — 安全修复
 
@@ -279,7 +288,7 @@ CleanYourMac/
 └── deletes.log                操作审计（运行时生成，已忽略）
 ```
 
-运行测试（共 57 项）：
+运行测试（共 63 项）：
 
 ```bash
 python3 -m unittest discover -s tests -v
